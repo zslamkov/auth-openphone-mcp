@@ -10,18 +10,25 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"migrations": [
 		{
-			"new_sqlite_classes": ["MyMCP"],
-			"tag": "v1"
+			"new_sqlite_classes": ["OpenPhoneMCPAgent"],
+			"tag": "v2"
 		}
 	],
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "MyMCP",
+				"class_name": "OpenPhoneMCPAgent",
 				"name": "MCP_OBJECT"
 			}
 		]
 	},
+	"kv_namespaces": [
+		{
+			"binding": "KV",
+			"id": "a1b3ca511d1849b8b428c2ffcb640433",
+			"preview_id": "bc0676aa6fa8481c96788b3080d0b7c2"
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

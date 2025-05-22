@@ -1,50 +1,129 @@
-# Building a Remote MCP Server on Cloudflare (Without Auth)
+# OpenPhone Remote MCP Server on Cloudflare
 
-This example allows you to deploy a remote MCP server that doesn't require authentication on Cloudflare Workers. 
+A remote Model Context Protocol (MCP) server that provides OpenPhone functionality through Cloudflare Workers.
 
-## Get started: 
+## Current Status
 
-[![Deploy to Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/ai/tree/main/demos/remote-mcp-authless)
+✅ **Completed**:
+- Basic remote MCP server infrastructure set up
+- OpenPhone API client adapted for Cloudflare Workers (using native fetch)
+- OpenPhone MCP Agent with three main tools:
+  - `setup-api-key`: Configure OpenPhone API key
+  - `send-message`: Send individual text messages
+  - `bulk-messages`: Send messages to multiple recipients
+  - `create-contact`: Create contacts in OpenPhone
+- Local development environment working
 
-This will deploy your MCP server to a URL like: `remote-mcp-server-authless.<your-account>.workers.dev/sse`
+🎯 **Next Steps**:
+- Environment variable configuration for OpenPhone API key
+- Authentication system with GitHub OAuth
+- User-specific API key storage using KV
+- Production deployment
 
-Alternatively, you can use the command line below to get the remote MCP Server created on your local machine:
-```bash
-npm create cloudflare@latest -- my-mcp-server --template=cloudflare/ai/demos/remote-mcp-authless
-```
+## Tools Available
 
-## Customizing your MCP Server
+### Setup Tool
+- **setup-api-key**: Currently shows placeholder message - will be enhanced to save API keys per user
 
-To add your own [tools](https://developers.cloudflare.com/agents/model-context-protocol/tools/) to the MCP server, define each tool inside the `init()` method of `src/index.ts` using `this.server.tool(...)`. 
+### OpenPhone Tools
+- **send-message**: Send a text message from your OpenPhone number to a recipient
+- **bulk-messages**: Send the same message to multiple recipients
+- **create-contact**: Create new contacts with email, phone, and company information
 
-## Connect to Cloudflare AI Playground
+## Local Development
 
-You can connect to your MCP server from the Cloudflare AI Playground, which is a remote MCP client:
+### Prerequisites
+- Node.js and npm
+- Wrangler CLI
 
-1. Go to https://playground.ai.cloudflare.com/
-2. Enter your deployed MCP server URL (`remote-mcp-server-authless.<your-account>.workers.dev/sse`)
-3. You can now use your MCP tools directly from the playground!
+### Setup
+1. Clone this repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## Connect Claude Desktop to your MCP server
+3. Configure your OpenPhone API key:
+   ```bash
+   # Edit .dev.vars file and replace with your actual API key
+   OPENPHONE_API_KEY=your_actual_openphone_api_key_here
+   ```
 
-You can also connect to your remote MCP server from local MCP clients, by using the [mcp-remote proxy](https://www.npmjs.com/package/mcp-remote). 
+4. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-To connect to your MCP server from Claude Desktop, follow [Anthropic's Quickstart](https://modelcontextprotocol.io/quickstart/user) and within Claude Desktop go to Settings > Developer > Edit Config.
+5. Test with MCP Inspector:
+   ```bash
+   npx @modelcontextprotocol/inspector@latest
+   ```
+   - Set Transport Type to "SSE"
+   - Use URL: `http://localhost:8787/sse`
+   - Click "Connect"
+   
+   **Without API Key**: You'll see only the `setup-api-key` tool with instructions
+   **With API Key**: You'll see all OpenPhone tools (send-message, bulk-messages, create-contact)
 
-Update with this configuration:
+### Testing with Claude Desktop
+
+Update your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "calculator": {
+    "openphone": {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:8787/sse"  // or remote-mcp-server-authless.your-account.workers.dev/sse
+        "http://localhost:8787/sse"
       ]
     }
   }
 }
 ```
 
-Restart Claude and you should see the tools become available. 
+## Architecture
+
+### Current Implementation
+- **Authless**: No authentication required currently
+- **Cloudflare Workers**: Serverless execution environment
+- **Durable Objects**: For stateful operations (configured but not used yet)
+- **Native Fetch**: Uses Workers' built-in fetch instead of node-fetch
+
+### File Structure
+```
+src/
+├── index.ts                    # Main Worker entry point
+├── openphone-api.ts           # OpenPhone API client (adapted for Workers)
+└── openphone-mcp-agent.ts     # MCP Agent implementation with tools
+```
+
+## Adding Authentication (Planned)
+
+The next major step is to add GitHub OAuth authentication:
+
+1. Switch to the GitHub OAuth template structure
+2. Add KV namespace for storing user API keys
+3. Implement per-user API key management
+4. Add proper environment variable handling
+
+## Environment Variables
+
+Will be configured for:
+- `OPENPHONE_API_KEY`: For server-wide API key (development)
+- `GITHUB_CLIENT_ID`: For OAuth (when authentication added)
+- `GITHUB_CLIENT_SECRET`: For OAuth (when authentication added)
+
+## Deployment
+
+Deploy to Cloudflare:
+```bash
+wrangler deploy
+```
+
+The deployed server will be available at `https://your-worker.workers.dev/sse`
+
+## Contributing
+
+This is based on the implementation plan in `implementation_plan.md` which shows the step-by-step conversion from a local stdio MCP server to a remote Cloudflare-hosted server with authentication.
