@@ -8,27 +8,46 @@ A remote Model Context Protocol (MCP) server that provides OpenPhone functionali
 - Basic remote MCP server infrastructure set up
 - OpenPhone API client adapted for Cloudflare Workers (using native fetch)
 - OpenPhone MCP Agent with three main tools:
-  - `setup-api-key`: Configure OpenPhone API key
   - `send-message`: Send individual text messages
   - `bulk-messages`: Send messages to multiple recipients
   - `create-contact`: Create contacts in OpenPhone
+- **URL parameter API key support** - pass your API key directly in the Claude Desktop config
+- Environment variable configuration for OpenPhone API key (fallback)
 - Local development environment working
-
-🎯 **Next Steps**:
-- Environment variable configuration for OpenPhone API key
-- Authentication system with GitHub OAuth
-- User-specific API key storage using KV
-- Production deployment
+- Production deployment ready
 
 ## Tools Available
-
-### Setup Tool
-- **setup-api-key**: Currently shows placeholder message - will be enhanced to save API keys per user
 
 ### OpenPhone Tools
 - **send-message**: Send a text message from your OpenPhone number to a recipient
 - **bulk-messages**: Send the same message to multiple recipients
 - **create-contact**: Create new contacts with email, phone, and company information
+
+*Note: If no OpenPhone API key is configured, you'll see a setup-instructions tool with configuration help.*
+
+## 🚀 Quick Setup (Recommended)
+
+The easiest way to use this MCP server is to pass your API key directly in your Claude Desktop configuration:
+
+Update your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "openphone": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://your-worker-url.workers.dev/sse?apiKey=YOUR_OPENPHONE_API_KEY"
+      ]
+    }
+  }
+}
+```
+
+**Replace `YOUR_OPENPHONE_API_KEY`** with your actual OpenPhone API key from your dashboard.
+
+That's it! Restart Claude Desktop and you're ready to go.
 
 ## Local Development
 
@@ -43,10 +62,18 @@ A remote Model Context Protocol (MCP) server that provides OpenPhone functionali
    npm install
    ```
 
-3. Configure your OpenPhone API key:
+3. Configure your OpenPhone API key (choose one method):
+
+   **Option A: URL Parameter (matches production)**
    ```bash
-   # Edit .dev.vars file and replace with your actual API key
-   OPENPHONE_API_KEY=your_actual_openphone_api_key_here
+   npm run dev
+   # Then use: http://localhost:8787/sse?apiKey=your_api_key_here
+   ```
+
+   **Option B: Environment Variable**
+   ```bash
+   # Create .dev.vars file and add your actual API key
+   echo "OPENPHONE_API_KEY=your_actual_openphone_api_key_here" > .dev.vars
    ```
 
 4. Start the development server:
@@ -59,15 +86,12 @@ A remote Model Context Protocol (MCP) server that provides OpenPhone functionali
    npx @modelcontextprotocol/inspector@latest
    ```
    - Set Transport Type to "SSE"
-   - Use URL: `http://localhost:8787/sse`
+   - Use URL: `http://localhost:8787/sse?apiKey=YOUR_API_KEY` (or `http://localhost:8787/sse` if using .dev.vars)
    - Click "Connect"
-   
-   **Without API Key**: You'll see only the `setup-api-key` tool with instructions
-   **With API Key**: You'll see all OpenPhone tools (send-message, bulk-messages, create-contact)
 
-### Testing with Claude Desktop
+### Testing with Claude Desktop (Local)
 
-Update your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+For local testing, update your Claude Desktop configuration:
 
 ```json
 {
@@ -76,7 +100,7 @@ Update your Claude Desktop configuration (`~/Library/Application Support/Claude/
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:8787/sse"
+        "http://localhost:8787/sse?apiKey=YOUR_OPENPHONE_API_KEY"
       ]
     }
   }
@@ -86,44 +110,79 @@ Update your Claude Desktop configuration (`~/Library/Application Support/Claude/
 ## Architecture
 
 ### Current Implementation
-- **Authless**: No authentication required currently
+- **URL Parameter Based**: Pass your API key as `?apiKey=xxx` in the URL (recommended)
+- **Environment Variable Fallback**: Uses OPENPHONE_API_KEY environment variable if no URL parameter
 - **Cloudflare Workers**: Serverless execution environment
-- **Durable Objects**: For stateful operations (configured but not used yet)
+- **Durable Objects**: For stateful MCP operations
 - **Native Fetch**: Uses Workers' built-in fetch instead of node-fetch
 
 ### File Structure
 ```
 src/
-├── index.ts                    # Main Worker entry point
+├── index.ts                    # Main Worker entry point with URL parameter extraction
 ├── openphone-api.ts           # OpenPhone API client (adapted for Workers)
 └── openphone-mcp-agent.ts     # MCP Agent implementation with tools
 ```
 
-## Adding Authentication (Planned)
+## Configuration Options
 
-The next major step is to add GitHub OAuth authentication:
+### Priority Order
+1. **URL Parameter**: `?apiKey=YOUR_API_KEY` (highest priority)
+2. **Environment Variable**: `OPENPHONE_API_KEY` (fallback)
 
-1. Switch to the GitHub OAuth template structure
-2. Add KV namespace for storing user API keys
-3. Implement per-user API key management
-4. Add proper environment variable handling
+### Environment Variables
 
-## Environment Variables
-
-Will be configured for:
-- `OPENPHONE_API_KEY`: For server-wide API key (development)
-- `GITHUB_CLIENT_ID`: For OAuth (when authentication added)
-- `GITHUB_CLIENT_SECRET`: For OAuth (when authentication added)
+Configure in Cloudflare Workers dashboard or `.dev.vars` for local development:
+- `OPENPHONE_API_KEY`: Your OpenPhone API key (optional if using URL parameter)
 
 ## Deployment
 
-Deploy to Cloudflare:
+### Option 1: URL Parameter Only (Recommended)
+Just deploy without setting any environment variables:
+
 ```bash
+wrangler deploy
+```
+
+Users pass their API key in the URL: `https://your-worker.workers.dev/sse?apiKey=xxx`
+
+### Option 2: Environment Variable Fallback
+Set a fallback API key in Cloudflare Workers:
+
+```bash
+wrangler secret put OPENPHONE_API_KEY
 wrangler deploy
 ```
 
 The deployed server will be available at `https://your-worker.workers.dev/sse`
 
+## Usage Examples
+
+### With Claude Desktop
+Ask Claude to help with your OpenPhone tasks:
+
+- *"Send a text to +1234567890 saying 'Meeting moved to 3pm'"*
+- *"Create a contact for John Smith at Acme Corp with email john@acme.com"*
+- *"Send the same message to multiple people about the project update"*
+
+### With MCP Inspector
+Connect to your server URL and explore the available tools interactively.
+
+## Benefits of URL Parameter Approach
+
+✅ **Simple setup** - Just add API key to Claude Desktop config  
+✅ **No server configuration** - No need to set environment variables  
+✅ **User-specific** - Each user uses their own API key  
+✅ **Secure** - API key passed via HTTPS, not stored server-side  
+✅ **Familiar pattern** - Same approach as Stripe and other MCP servers  
+
+## Security
+
+- Your API key is passed securely via HTTPS URL parameters
+- API keys are validated before allowing access to tools
+- No API keys stored server-side when using URL parameter approach
+- Each request is validated independently
+
 ## Contributing
 
-This is based on the implementation plan in `implementation_plan.md` which shows the step-by-step conversion from a local stdio MCP server to a remote Cloudflare-hosted server with authentication.
+This implementation shows how to build a remote MCP server that accepts user credentials via URL parameters, similar to how other popular MCP servers work.

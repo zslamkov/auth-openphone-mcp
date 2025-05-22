@@ -22,13 +22,6 @@
 			}
 		]
 	},
-	"kv_namespaces": [
-		{
-			"binding": "KV",
-			"id": "a1b3ca511d1849b8b428c2ffcb640433",
-			"preview_id": "bc0676aa6fa8481c96788b3080d0b7c2"
-		}
-	],
 	"observability": {
 		"enabled": true
 	}

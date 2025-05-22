@@ -3,15 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OpenPhoneClient } from "./openphone-api.js";
 
-// Props from OAuth (user info + stored data)
+// Props that can be passed from URL parameters
 type Props = {
-  login: string;          // GitHub username from OAuth
+  apiKey?: string;        // API key from URL parameter
 }
 
 // Environment bindings for Cloudflare
 type Env = {
-  OAUTH_PROVIDER: any;
-  KV: KVNamespace;        // For storing user API keys
+  OPENPHONE_API_KEY?: string;
 }
 
 export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
@@ -21,65 +20,57 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
   });
 
   async init() {
-    // Check if user has configured their OpenPhone API key
-    const userApiKey = await this.getUserApiKey();
+    // Check for API key from multiple sources
+    const apiKey = await this.getApiKey();
     
-    if (!userApiKey) {
-      // Only show setup tool if no API key configured
-      this.addSetupTool();
+    if (!apiKey) {
+      // No API key provided - server will have no tools available
       return;
     }
 
-    // Add all your existing OpenPhone tools
-    this.addOpenPhoneTools(userApiKey);
+    // Validate the API key
+    const isValid = await this.validateApiKey(apiKey);
+    if (!isValid) {
+      // Invalid API key - server will have no tools available
+      return;
+    }
+
+    // Add all OpenPhone tools
+    this.addOpenPhoneTools(apiKey);
   }
 
-  private async getUserApiKey(): Promise<string | null> {
-    const key = `openphone_api_key:${this.props.login}`;
-    return await this.env.KV.get(key);
+  private async getApiKey(): Promise<string | null> {
+    // Priority order:
+    // 1. URL parameter (from Claude Desktop config)
+    // 2. Environment variable (for server-wide config)
+    
+    // Check URL parameter first
+    const propsApiKey = (this.props as Props).apiKey;
+    if (propsApiKey) {
+      return propsApiKey;
+    }
+    
+    // Fallback to environment variable
+    return (this.env as Env).OPENPHONE_API_KEY || null;
   }
 
-  private async saveUserApiKey(apiKey: string): Promise<void> {
-    const key = `openphone_api_key:${this.props.login}`;
-    await this.env.KV.put(key, apiKey);
-  }
-
-  private addSetupTool() {
-    this.server.tool(
-      "setup-api-key",
-      {
-        apiKey: z.string().describe("Your OpenPhone API key")
-      },
-      async ({ apiKey }: { apiKey: string }) => {
-        try {
-          // Test the API key by making a simple request
-          const testClient = new OpenPhoneClient(apiKey);
-          // Note: Add a simple test call here if OpenPhone has an endpoint for it
-          // For now, we'll assume it's valid if it's provided
-          
-          await this.saveUserApiKey(apiKey);
-          
-          // Reinitialize with the new API key
-          await this.addOpenPhoneTools(apiKey);
-          
-          return {
-            content: [{
-              type: "text",
-              text: "✅ OpenPhone API key saved successfully! All OpenPhone tools are now available. Try asking me to send a message or create a contact."
-            }]
-          };
-        } catch (error) {
-          return {
-            content: [{
-              type: "text",
-              text: `❌ Failed to save API key: ${error instanceof Error ? error.message : String(error)}`
-            }],
-            isError: true
-          };
+  private async validateApiKey(apiKey: string): Promise<boolean> {
+    try {
+      const testClient = new OpenPhoneClient(apiKey);
+      // Make a simple test call to validate the API key
+      const response = await fetch('https://api.openphone.com/v1/phone-numbers', {
+        headers: {
+          'Authorization': apiKey,
+          'Content-Type': 'application/json'
         }
-      }
-    );
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
+
+
 
   private addOpenPhoneTools(apiKey: string) {
     const openPhoneClient = new OpenPhoneClient(apiKey);
@@ -93,10 +84,8 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         content: z.string().describe("The message content")
       },
       async ({ from, to, content }: { from: string; to: string; content: string }) => {
-        // Use the user's GitHub username as userId
-        const userId = this.props.login as string;
         try {
-          const result = await openPhoneClient.sendMessage(from, [to], content, userId);
+          const result = await openPhoneClient.sendMessage(from, [to], content);
           return {
             content: [{
               type: "text",
@@ -125,12 +114,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         content: z.string().describe("The message content")
       },
       async ({ from, to, content }: { from: string; to: string[]; content: string }) => {
-        const userId = this.props.login as string;
         const results: { to: string; success: boolean; error?: string }[] = [];
         
         for (const number of to) {
           try {
-            await openPhoneClient.sendMessage(from, [number], content, userId);
+            await openPhoneClient.sendMessage(from, [number], content);
             results.push({ to: number, success: true });
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);

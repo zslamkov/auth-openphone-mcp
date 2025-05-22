@@ -35,15 +35,14 @@ export class OpenPhoneClient {
   }
 
   // Send Message
-  async sendMessage(from: string, to: string[], content: string, userId: string): Promise<any> {
+  async sendMessage(from: string, to: string[], content: string): Promise<any> {
     return this.request<any>(
       '/messages',
       'POST',
       {
         from,
         to,
-        content,
-        userId
+        content
       }
     );
   }
