@@ -80,19 +80,17 @@ export class OpenPhoneClient {
     const options: RequestInit = {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000) // 30 second timeout
     };
 
     try {
       const response = await fetch(url, options);
 
       if (!response.ok) {
-        const errorText = await response.text();
-        const error: ApiError = {
-          status: response.status,
-          message: errorText
-        };
-        throw new Error(`OpenPhone API Error (${error.status}): ${error.message}`);
+        // Sanitize error messages to prevent information disclosure
+        const sanitizedError = this.sanitizeErrorMessage(response.status);
+        throw new Error(sanitizedError);
       }
 
       return response.json() as Promise<T>;
@@ -100,16 +98,61 @@ export class OpenPhoneClient {
       if (error instanceof Error) {
         throw error;
       }
-      throw new Error(`Unexpected error: ${String(error)}`);
+      throw new Error('Request failed due to network or server error');
+    }
+  }
+
+  private sanitizeErrorMessage(status: number): string {
+    switch (status) {
+      case 400:
+        return 'Bad request - invalid parameters provided';
+      case 401:
+        return 'Authentication failed - check your API key';
+      case 403:
+        return 'Access forbidden - insufficient permissions';
+      case 404:
+        return 'Resource not found';
+      case 429:
+        return 'Rate limit exceeded - please try again later';
+      case 500:
+        return 'Internal server error - please try again later';
+      default:
+        return `Request failed with status ${status}`;
     }
   }
 
   async sendMessage(from: string, to: string[], content: string): Promise<unknown> {
+    // Input validation
     if (!from?.trim() || !to?.length || !content?.trim()) {
       throw new Error('from, to, and content are required');
     }
     
-    const payload: SendMessageRequest = { from, to, content };
+    // Validate phone number format
+    const phoneRegex = /^[\+]?[\d\s\-\(\)]{10,}$/;
+    if (!phoneRegex.test(from.trim())) {
+      throw new Error('Invalid from phone number format');
+    }
+    
+    // Validate recipient numbers and limit count
+    if (to.length > 100) {
+      throw new Error('Too many recipients - maximum 100 allowed');
+    }
+    
+    const validTo = to.filter(num => num?.trim() && phoneRegex.test(num.trim()));
+    if (validTo.length === 0) {
+      throw new Error('No valid recipient phone numbers provided');
+    }
+    
+    // Sanitize content length
+    if (content.length > 1600) {
+      throw new Error('Message content too long - maximum 1600 characters');
+    }
+    
+    const payload: SendMessageRequest = { 
+      from: from.trim(), 
+      to: validTo.map(num => num.trim()), 
+      content: content.trim() 
+    };
     return this.request('/messages', 'POST', payload);
   }
 

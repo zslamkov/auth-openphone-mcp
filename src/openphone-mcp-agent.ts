@@ -3,9 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OpenPhoneClient } from "./openphone-api.js";
 
-// Props that can be passed from URL parameters
+// Props that can be passed from request headers or URL parameters (legacy)
 type Props = {
-  apiKey?: string;        // API key from URL parameter
+  apiKey?: string;        // API key from URL parameter (deprecated - use headers)
+  'x-openphone-api-key'?: string;  // API key from header (preferred)
+  'authorization'?: string;        // Bearer token format
 }
 
 // Environment bindings for Cloudflare
@@ -41,17 +43,62 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
 
   private async getApiKey(): Promise<string | null> {
     // Priority order:
-    // 1. URL parameter (from Claude Desktop config)
-    // 2. Environment variable (for server-wide config)
+    // 1. Authorization header (Bearer token)
+    // 2. X-OpenPhone-API-Key header
+    // 3. Environment variable (for server-wide config)
+    // 4. URL parameter (deprecated, for backward compatibility)
     
-    // Check URL parameter first
-    const propsApiKey = (this.props as Props).apiKey;
-    if (propsApiKey) {
-      return propsApiKey;
+    const props = this.props as Props;
+    
+    // Check Authorization header (Bearer format)
+    if (props.authorization) {
+      const bearerMatch = props.authorization.match(/^Bearer\s+(.+)$/i);
+      if (bearerMatch) {
+        return this.validateApiKeyFormat(bearerMatch[1]);
+      }
     }
     
-    // Fallback to environment variable
-    return (this.env as Env).OPENPHONE_API_KEY || null;
+    // Check custom header
+    if (props['x-openphone-api-key']) {
+      return this.validateApiKeyFormat(props['x-openphone-api-key']);
+    }
+    
+    // Environment variable fallback
+    const envKey = (this.env as Env).OPENPHONE_API_KEY;
+    if (envKey) {
+      return this.validateApiKeyFormat(envKey);
+    }
+    
+    // Legacy URL parameter support (deprecated)
+    if (props.apiKey) {
+      console.warn('API key in URL parameter is deprecated. Use X-OpenPhone-API-Key header instead.');
+      return this.validateApiKeyFormat(props.apiKey);
+    }
+    
+    return null;
+  }
+
+  private validateApiKeyFormat(apiKey: string): string | null {
+    if (!apiKey?.trim()) {
+      return null;
+    }
+    
+    // Basic format validation - adjust regex based on actual OpenPhone API key format
+    const trimmedKey = apiKey.trim();
+    
+    // Validate length (typical API keys are 32-64 characters)
+    if (trimmedKey.length < 16 || trimmedKey.length > 128) {
+      console.warn('API key length validation failed');
+      return null;
+    }
+    
+    // Validate characters (alphanumeric and common special chars)
+    if (!/^[a-zA-Z0-9._-]+$/.test(trimmedKey)) {
+      console.warn('API key contains invalid characters');
+      return null;
+    }
+    
+    return trimmedKey;
   }
 
   private async validateApiKey(apiKey: string): Promise<boolean> {

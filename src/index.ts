@@ -6,11 +6,12 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const url = new URL(request.url);
 
-		// Pass all URL search params to the agent
+		// Extract headers for secure API key transmission
+		const headers = Object.fromEntries(request.headers.entries());
+		
+		// Pass headers and URL params to the agent
 		const searchParams = Object.fromEntries(url.searchParams.entries());
-		if (Object.keys(searchParams).length > 0) {
-			ctx.props = searchParams;
-		}
+		ctx.props = { ...headers, ...searchParams };
 
 		// Handle MCP SSE endpoint
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
@@ -24,7 +25,13 @@ export default {
 
 		// Default homepage with instructions
 		return new Response(getHomepageHTML(), {
-			headers: { 'Content-Type': 'text/html' }
+			headers: { 
+				'Content-Type': 'text/html',
+				'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com",
+				'X-Frame-Options': 'DENY',
+				'X-Content-Type-Options': 'nosniff',
+				'Referrer-Policy': 'strict-origin-when-cross-origin'
+			}
 		});
 	},
 };
@@ -311,7 +318,7 @@ function getHomepageHTML(): string {
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://mcp.openphonelabs.com/sse?apiKey=YOUR_OPENPHONE_API_KEY"
+        "https://mcp.openphonelabs.com/sse"
       ]
     }
   }
@@ -319,7 +326,9 @@ function getHomepageHTML(): string {
             </div>
             
             <div class="highlight">
-                <strong>📝 Replace YOUR_OPENPHONE_API_KEY</strong> with your actual OpenPhone API key from your dashboard.
+                <strong>🔐 Set your API key as environment variable:</strong><br>
+                <code>OPENPHONE_API_KEY=your_actual_api_key</code><br>
+                Or use the X-OpenPhone-API-Key header for secure transmission.
             </div>
         </div>
         
@@ -363,7 +372,7 @@ function getHomepageHTML(): string {
                         command: "npx",
                         args: [
                             "mcp-remote",
-                            "https://mcp.openphonelabs.com/sse?apiKey=YOUR_OPENPHONE_API_KEY"
+                            "https://mcp.openphonelabs.com/sse"
                         ]
                     }
                 }
