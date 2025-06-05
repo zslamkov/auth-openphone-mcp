@@ -7,9 +7,17 @@ A production-ready remote Model Context Protocol (MCP) server that provides Open
 - **📱 Messaging**: Send individual or bulk text messages via OpenPhone
 - **👥 Contact Management**: Create and manage OpenPhone contacts
 - **📞 Call Transcripts**: Fetch and analyze call transcripts (Business plan required)
-- **🔐 Secure**: API key authentication with HTTPS encryption
+- **🔐 Enterprise Security**: Multiple authentication methods, input validation, security headers
 - **⚡ Fast**: Powered by Cloudflare Workers for global edge deployment
 - **🎨 Modern UI**: Beautiful homepage with setup instructions
+
+## 🔒 Security Features
+
+- **Multiple Authentication Methods**: Headers, environment variables, or URL parameters
+- **Input Validation**: Phone number format validation, message length limits
+- **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options
+- **Request Timeouts**: 30-second timeout protection
+- **Error Sanitization**: No sensitive information disclosure
 
 ## 🚀 Quick Setup
 
@@ -20,9 +28,15 @@ The easiest way to connect this MCP server to Claude Desktop:
 2. Go to Settings → Integrations → API
 3. Generate an API key
 
-### 2. Configure Claude Desktop
-Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+### 2. Configure Claude Desktop (Secure Method)
 
+**Option A: Environment Variable (Recommended)**
+Set your API key as an environment variable:
+```bash
+export OPENPHONE_API_KEY=your_actual_api_key
+```
+
+Then configure Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -30,14 +44,47 @@ Update your Claude Desktop configuration file (`~/Library/Application Support/Cl
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://mcp.openphonelabs.com/sse?apiKey=YOUR_OPENPHONE_API_KEY"
+        "https://mcp.openphonelabs.com/sse"
       ]
     }
   }
 }
 ```
 
-**Replace `YOUR_OPENPHONE_API_KEY`** with your actual API key.
+**Option B: Header Authentication**
+Configure with custom headers:
+```json
+{
+  "mcpServers": {
+    "openphone": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.openphonelabs.com/sse"
+      ],
+      "env": {
+        "X_OPENPHONE_API_KEY": "your_actual_api_key"
+      }
+    }
+  }
+}
+```
+
+**Option C: URL Parameter (Deprecated)**
+⚠️ **Not recommended for production** - API keys visible in logs:
+```json
+{
+  "mcpServers": {
+    "openphone": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.openphonelabs.com/sse?apiKey=your_actual_api_key"
+      ]
+    }
+  }
+}
+```
 
 ### 3. Restart Claude Desktop
 That's it! You can now ask Claude to help with OpenPhone tasks.
@@ -129,10 +176,13 @@ Configure custom routes in `wrangler.jsonc`:
 - **Deployment**: Cloudflare edge locations globally
 
 ### Security Model
-- API keys transmitted via HTTPS only
-- Per-request authentication validation
-- No server-side API key storage
-- Edge-based request processing
+- **Multiple Auth Methods**: Headers (preferred), environment variables, URL parameters (deprecated)
+- **Input Validation**: Phone number format, message length, API key format validation
+- **Security Headers**: Content Security Policy, X-Frame-Options, X-Content-Type-Options
+- **Error Sanitization**: Generic error messages prevent information disclosure
+- **Request Timeouts**: 30-second timeout prevents hanging requests
+- **HTTPS Only**: All API communication encrypted
+- **No Server Storage**: API keys never stored server-side
 
 ### File Structure
 ```
@@ -144,12 +194,15 @@ src/
 
 ## 🔧 Configuration
 
-### Environment Variables (Optional)
-Set fallback configuration in Cloudflare Workers:
-- `OPENPHONE_API_KEY`: Fallback API key (optional if using URL parameter)
+### Authentication Priority Order
+1. **Authorization Header**: `Authorization: Bearer YOUR_API_KEY`
+2. **Custom Header**: `X-OpenPhone-API-Key: YOUR_API_KEY`
+3. **Environment Variable**: `OPENPHONE_API_KEY=YOUR_API_KEY`
+4. **URL Parameter** (deprecated): `?apiKey=YOUR_API_KEY`
 
-### URL Parameters (Recommended)
-- `?apiKey=xxx`: Your OpenPhone API key (highest priority)
+### Environment Variables
+Set in Cloudflare Workers or local environment:
+- `OPENPHONE_API_KEY`: Your OpenPhone API key
 
 ## 📋 Requirements
 
@@ -167,9 +220,10 @@ Set fallback configuration in Cloudflare Workers:
 ### Common Issues
 
 **"No tools available"**
-- Check your API key is correct
-- Verify the URL parameter format: `?apiKey=YOUR_KEY`
+- Check your API key is correct and properly formatted
+- Verify authentication method (environment variable, header, or URL parameter)
 - Ensure your OpenPhone account has API access enabled
+- Check API key length (should be 16-128 characters) and contains only valid characters
 
 **"Error fetching call transcripts"**
 - Call transcripts require OpenPhone Business plan
