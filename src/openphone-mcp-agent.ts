@@ -57,14 +57,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
   private async validateApiKey(apiKey: string): Promise<boolean> {
     try {
       const testClient = new OpenPhoneClient(apiKey);
-      // Make a simple test call to validate the API key
-      const response = await fetch('https://api.openphone.com/v1/phone-numbers', {
-        headers: {
-          'Authorization': apiKey,
-          'Content-Type': 'application/json'
-        }
-      });
-      return response.ok;
+      return await testClient.validateApiKey();
     } catch {
       return false;
     }
@@ -83,7 +76,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       },
       async ({ from, to, content }: { from: string; to: string; content: string }) => {
         try {
-          const result = await openPhoneClient.sendMessage(from, [to], content);
+          const result = await openPhoneClient.sendMessage(from, [to], content) as any;
           return {
             content: [{
               type: "text",
@@ -215,7 +208,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       }) => {
         try {
           // Step 1: List phone numbers to find phoneNumberId
-          const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers();
+          const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers() as any;
           
           // Find the matching phone number
           const phoneNumberData = phoneNumbersResponse.data?.find((pn: any) => 
@@ -246,7 +239,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             const conversationsResponse = await openPhoneClient.listConversations({
               phoneNumber: phoneNumberId,
               maxResults: 50
-            });
+            }) as any;
             
             // Extract unique participants from conversations
             const participants = new Set<string>();
@@ -297,7 +290,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
                 maxResults: Math.min(maxResults - allTranscripts.length, 20),
                 createdAfter,
                 createdBefore
-              });
+              }) as any;
               
               // Step 4: Get transcripts for each call
               if (callsResponse.data && callsResponse.data.length > 0) {
@@ -306,7 +299,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
                   totalCallsChecked++;
                   
                   try {
-                    const transcriptResponse = await openPhoneClient.getCallTranscript(call.id);
+                    const transcriptResponse = await openPhoneClient.getCallTranscript(call.id) as any;
                     
                     if (transcriptResponse.data && transcriptResponse.data.status === 'completed' && transcriptResponse.data.dialogue) {
                       allTranscripts.push({

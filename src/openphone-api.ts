@@ -1,15 +1,75 @@
+interface SendMessageRequest {
+  from: string;
+  to: string[];
+  content: string;
+}
+
+interface ListConversationsParams {
+  phoneNumber?: string;
+  maxResults?: number;
+}
+
+interface ListCallsParams {
+  phoneNumberId: string;
+  participants: string[];
+  userId?: string;
+  maxResults?: number;
+  pageToken?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+}
+
+interface ApiError {
+  status: number;
+  message: string;
+}
+
 export class OpenPhoneClient {
   private apiKey: string;
   private baseUrl: string = 'https://api.openphone.com/v1';
+  private defaultMaxResults = 10;
 
   constructor(apiKey: string) {
+    if (!apiKey?.trim()) {
+      throw new Error('API key is required');
+    }
     this.apiKey = apiKey;
+  }
+
+  async validateApiKey(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/phone-numbers`, {
+        headers: {
+          'Authorization': this.apiKey,
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  private buildQueryString(params: Record<string, any>): string {
+    const searchParams = new URLSearchParams();
+    
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        if (Array.isArray(value)) {
+          value.forEach(item => searchParams.append(key, String(item)));
+        } else {
+          searchParams.append(key, String(value));
+        }
+      }
+    });
+    
+    return searchParams.toString();
   }
 
   private async request<T>(
     endpoint: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
-    body?: any
+    body?: unknown
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers = {
@@ -23,105 +83,79 @@ export class OpenPhoneClient {
       body: body ? JSON.stringify(body) : undefined
     };
 
-    // Use native fetch (available in Cloudflare Workers)
-    const response = await fetch(url, options);
+    try {
+      const response = await fetch(url, options);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API request failed: ${response.status} ${errorText}`);
-    }
-
-    return response.json() as Promise<T>;
-  }
-
-  // Send Message
-  async sendMessage(from: string, to: string[], content: string): Promise<any> {
-    return this.request<any>(
-      '/messages',
-      'POST',
-      {
-        from,
-        to,
-        content
+      if (!response.ok) {
+        const errorText = await response.text();
+        const error: ApiError = {
+          status: response.status,
+          message: errorText
+        };
+        throw new Error(`OpenPhone API Error (${error.status}): ${error.message}`);
       }
-    );
+
+      return response.json() as Promise<T>;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Unexpected error: ${String(error)}`);
+    }
   }
 
-  // Create Contact
-  async createContact(contactData: any): Promise<any> {
-    return this.request<any>(
-      '/contacts',
-      'POST',
-      contactData
-    );
+  async sendMessage(from: string, to: string[], content: string): Promise<unknown> {
+    if (!from?.trim() || !to?.length || !content?.trim()) {
+      throw new Error('from, to, and content are required');
+    }
+    
+    const payload: SendMessageRequest = { from, to, content };
+    return this.request('/messages', 'POST', payload);
   }
 
-  // List Phone Numbers
-  async listPhoneNumbers(userId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (userId) {
-      params.append('userId', userId);
+  async createContact(contactData: Record<string, unknown>): Promise<unknown> {
+    if (!contactData || Object.keys(contactData).length === 0) {
+      throw new Error('Contact data is required');
     }
     
-    const endpoint = params.toString() ? `/phone-numbers?${params.toString()}` : '/phone-numbers';
-    return this.request<any>(endpoint);
+    return this.request('/contacts', 'POST', contactData);
   }
 
-  // List Conversations
-  async listConversations(params: {
-    phoneNumber?: string;
-    maxResults?: number;
-  }): Promise<any> {
-    const queryParams = new URLSearchParams();
-    
-    if (params.phoneNumber) {
-      queryParams.append('phoneNumber', params.phoneNumber);
-    }
-    if (params.maxResults) {
-      queryParams.append('maxResults', params.maxResults.toString());
-    }
-    
-    // Default maxResults if not provided
-    if (!params.maxResults) {
-      queryParams.append('maxResults', '10');
-    }
-    
-    const endpoint = `/conversations?${queryParams.toString()}`;
-    return this.request<any>(endpoint);
+  async listPhoneNumbers(userId?: string): Promise<unknown> {
+    const queryString = this.buildQueryString({ userId });
+    const endpoint = queryString ? `/phone-numbers?${queryString}` : '/phone-numbers';
+    return this.request(endpoint);
   }
 
-  // List Calls
-  async listCalls(params: {
-    phoneNumberId: string;
-    participants: string[];
-    userId?: string;
-    maxResults?: number;
-    pageToken?: string;
-    createdAfter?: string;
-    createdBefore?: string;
-  }): Promise<any> {
-    const queryParams = new URLSearchParams();
+  async listConversations(params: ListConversationsParams = {}): Promise<unknown> {
+    const queryParams = {
+      ...params,
+      maxResults: params.maxResults ?? this.defaultMaxResults
+    };
     
-    queryParams.append('phoneNumberId', params.phoneNumberId);
-    params.participants.forEach(participant => queryParams.append('participants', participant));
-    
-    if (params.userId) queryParams.append('userId', params.userId);
-    if (params.maxResults) queryParams.append('maxResults', params.maxResults.toString());
-    if (params.pageToken) queryParams.append('pageToken', params.pageToken);
-    if (params.createdAfter) queryParams.append('createdAfter', params.createdAfter);
-    if (params.createdBefore) queryParams.append('createdBefore', params.createdBefore);
-    
-    // Default maxResults if not provided
-    if (!params.maxResults) {
-      queryParams.append('maxResults', '10');
-    }
-    
-    const endpoint = `/calls?${queryParams.toString()}`;
-    return this.request<any>(endpoint);
+    const queryString = this.buildQueryString(queryParams);
+    return this.request(`/conversations?${queryString}`);
   }
 
-  // Get Call Transcript
-  async getCallTranscript(callId: string): Promise<any> {
-    return this.request<any>(`/call-transcripts/${callId}`);
+  async listCalls(params: ListCallsParams): Promise<unknown> {
+    if (!params.phoneNumberId?.trim() || !params.participants?.length) {
+      throw new Error('phoneNumberId and participants are required');
+    }
+    
+    const queryParams = {
+      ...params,
+      maxResults: params.maxResults ?? this.defaultMaxResults
+    };
+    
+    const queryString = this.buildQueryString(queryParams);
+    return this.request(`/calls?${queryString}`);
+  }
+
+  async getCallTranscript(callId: string): Promise<unknown> {
+    if (!callId?.trim()) {
+      throw new Error('Call ID is required');
+    }
+    
+    return this.request(`/call-transcripts/${callId}`);
   }
 } 

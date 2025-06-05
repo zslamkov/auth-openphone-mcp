@@ -6,12 +6,10 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const url = new URL(request.url);
 
-		// Extract API key from URL parameter
-		const apiKey = url.searchParams.get('apiKey');
-
-		// Pass API key through execution context
-		if (apiKey) {
-			ctx.props = { apiKey };
+		// Pass all URL search params to the agent
+		const searchParams = Object.fromEntries(url.searchParams.entries());
+		if (Object.keys(searchParams).length > 0) {
+			ctx.props = searchParams;
 		}
 
 		// Handle MCP SSE endpoint
