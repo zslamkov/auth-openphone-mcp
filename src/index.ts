@@ -77,19 +77,19 @@ function getHomepageHTML(): string {
         }
         
         .container {
-            max-width: 1000px;
+            max-width: 900px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1.5rem;
         }
         
         .hero { 
             text-align: center; 
-            margin-bottom: 4rem;
+            margin-bottom: 2.5rem;
             background: rgba(255, 255, 255, 0.98);
             backdrop-filter: blur(20px);
-            padding: 5rem 3rem;
-            border-radius: 32px;
-            box-shadow: 0 32px 64px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
+            padding: 3.5rem 2.5rem;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
             border: 1px solid rgba(255,255,255,0.3);
             position: relative;
             overflow: hidden;
@@ -106,21 +106,21 @@ function getHomepageHTML(): string {
         }
         
         .hero h1 {
-            font-size: 4rem;
+            font-size: 3rem;
             font-weight: 800;
             background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             letter-spacing: -0.025em;
         }
         
         .hero p {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             color: #475569;
             font-weight: 500;
-            max-width: 600px;
+            max-width: 500px;
             margin: 0 auto;
         }
         
@@ -131,11 +131,11 @@ function getHomepageHTML(): string {
             background: rgba(34, 197, 94, 0.1);
             border: 1px solid rgba(34, 197, 94, 0.3);
             color: #059669;
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.875rem;
             border-radius: 50px;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 600;
-            margin-top: 1.5rem;
+            margin-top: 1rem;
         }
         
         .status-dot {
@@ -154,10 +154,10 @@ function getHomepageHTML(): string {
         .card {
             background: rgba(255, 255, 255, 0.97);
             backdrop-filter: blur(20px);
-            padding: 3rem;
-            border-radius: 24px;
-            box-shadow: 0 16px 32px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.2);
-            margin: 3rem 0;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 12px 24px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.2);
+            margin: 2rem 0;
             border: 1px solid rgba(255,255,255,0.3);
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
@@ -193,16 +193,33 @@ function getHomepageHTML(): string {
         }
         
         .code { 
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: #e2e8f0;
-            padding: 1.5rem;
-            border-radius: 12px;
+            padding: 0;
+            border-radius: 16px;
             font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
-            overflow-x: auto;
-            font-size: 0.9rem;
+            overflow: hidden;
+            font-size: 0.875rem;
             line-height: 1.6;
-            border: 1px solid #475569;
+            border: 1px solid rgba(71, 85, 105, 0.3);
             position: relative;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        
+        .code-header {
+            background: linear-gradient(135deg, #334155 0%, #475569 100%);
+            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
+            padding: 0.75rem 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+        
+        .code-content {
+            padding: 1.25rem;
         }
         
         .code pre {
@@ -213,52 +230,36 @@ function getHomepageHTML(): string {
             tab-size: 2;
         }
         
-        .code::before {
-            content: 'config.json';
-            position: absolute;
-            top: -10px;
-            left: 1rem;
-            background: #475569;
-            color: #cbd5e1;
-            padding: 0.25rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-        
         .copy-button {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: rgba(148, 163, 184, 0.1);
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            color: #cbd5e1;
-            padding: 0.5rem;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #60a5fa;
+            padding: 0.375rem 0.75rem;
             border-radius: 8px;
             cursor: pointer;
             transition: all 0.2s ease;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            font-size: 0.8rem;
+            gap: 0.375rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
         
         .copy-button:hover {
-            background: rgba(148, 163, 184, 0.2);
-            border-color: rgba(148, 163, 184, 0.4);
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.5);
             transform: translateY(-1px);
         }
         
         .copy-button.copied {
             background: rgba(34, 197, 94, 0.2);
-            border-color: rgba(34, 197, 94, 0.4);
+            border-color: rgba(34, 197, 94, 0.5);
             color: #22c55e;
         }
         
         .copy-icon {
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
         }
         
         .highlight {
@@ -363,7 +364,11 @@ function getHomepageHTML(): string {
         
         @media (max-width: 768px) {
             .hero h1 {
-                font-size: 2.5rem;
+                font-size: 2.25rem;
+            }
+            
+            .hero p {
+                font-size: 1.1rem;
             }
             
             .container {
@@ -371,11 +376,20 @@ function getHomepageHTML(): string {
             }
             
             .hero {
-                padding: 2.5rem 2rem;
+                padding: 2.5rem 1.5rem;
+                margin-bottom: 2rem;
             }
             
             .card {
-                padding: 2rem;
+                padding: 1.5rem;
+                margin: 1.5rem 0;
+            }
+            
+            .code-header {
+                padding: 0.5rem 1rem;
+                flex-direction: column;
+                gap: 0.5rem;
+                align-items: flex-start;
             }
         }
     </style>
@@ -396,13 +410,17 @@ function getHomepageHTML(): string {
             <p><strong>Add this to your Claude Desktop configuration:</strong></p>
             
             <div class="code">
-                <button class="copy-button" onclick="copyConfig(this)">
-                    <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>
-                    <span class="copy-text">Copy</span>
-                </button>
+                <div class="code-header">
+                    <span>claude_desktop_config.json</span>
+                    <button class="copy-button" onclick="copyConfig(this)">
+                        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span class="copy-text">Copy</span>
+                    </button>
+                </div>
+                <div class="code-content">
 <pre>{
   "mcpServers": {
     "openphone": {
@@ -414,6 +432,7 @@ function getHomepageHTML(): string {
     }
   }
 }</pre>
+                </div>
             </div>
             
             <div class="highlight">
