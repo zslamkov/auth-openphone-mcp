@@ -57,9 +57,23 @@ function getHomepageHTML(): string {
         body { 
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
             min-height: 100vh;
             color: #1a202c;
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+            pointer-events: none;
+            z-index: -1;
         }
         
         .container {
@@ -71,44 +85,97 @@ function getHomepageHTML(): string {
         .hero { 
             text-align: center; 
             margin-bottom: 4rem;
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.98);
             backdrop-filter: blur(20px);
-            padding: 4rem 3rem;
-            border-radius: 24px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
+            padding: 5rem 3rem;
+            border-radius: 32px;
+            box-shadow: 0 32px 64px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
+            border: 1px solid rgba(255,255,255,0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
         }
         
         .hero h1 {
-            font-size: 3.5rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-size: 4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 1rem;
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.025em;
         }
         
         .hero p {
-            font-size: 1.3rem;
-            color: #64748b;
-            font-weight: 400;
+            font-size: 1.5rem;
+            color: #475569;
+            font-weight: 500;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #059669;
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-top: 1.5rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #22c55e;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
         
         .card {
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.97);
             backdrop-filter: blur(20px);
-            padding: 2.5rem;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
-            margin: 2rem 0;
-            border: 1px solid rgba(255,255,255,0.2);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            padding: 3rem;
+            border-radius: 24px;
+            box-shadow: 0 16px 32px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.2);
+            margin: 3rem 0;
+            border: 1px solid rgba(255,255,255,0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
         }
         
         .card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+            transform: translateY(-8px);
+            box-shadow: 0 24px 48px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.3);
+        }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.8) 50%, transparent 100%);
         }
         
         .card h2 {
@@ -223,16 +290,36 @@ function getHomepageHTML(): string {
         }
         
         .tool-item {
-            background: rgba(248, 250, 252, 0.8);
-            padding: 1.25rem;
-            border-radius: 12px;
-            border: 1px solid #e2e8f0;
-            transition: all 0.2s ease;
+            background: rgba(248, 250, 252, 0.9);
+            padding: 1.5rem;
+            border-radius: 16px;
+            border: 1px solid rgba(226, 232, 240, 0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .tool-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 50%, #ec4899 100%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
         
         .tool-item:hover {
-            background: rgba(255, 255, 255, 0.9);
-            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 1);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            border-color: rgba(139, 92, 246, 0.3);
+        }
+        
+        .tool-item:hover::before {
+            opacity: 1;
         }
         
         .tool-name {
@@ -298,6 +385,10 @@ function getHomepageHTML(): string {
         <div class="hero">
             <h1>📞 OpenPhone MCP</h1>
             <p>AI-powered messaging and contact management for the modern workspace</p>
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                Production Ready
+            </div>
         </div>
         
         <div class="card">
@@ -356,7 +447,24 @@ function getHomepageHTML(): string {
 
         <div class="card">
             <h2><span class="icon">🔒</span>Enterprise Security</h2>
-            <p>Your API key is transmitted securely through encrypted HTTPS connections. The server validates your credentials before allowing access to any tools, ensuring your OpenPhone data remains protected.</p>
+            <div class="tools-grid">
+                <div class="tool-item">
+                    <div class="tool-name">🛡️ Multiple Auth Methods</div>
+                    <div class="tool-desc">Headers, environment variables, or URL parameters with format validation</div>
+                </div>
+                <div class="tool-item">
+                    <div class="tool-name">🔍 Input Validation</div>
+                    <div class="tool-desc">Phone number format, message length, and API key validation</div>
+                </div>
+                <div class="tool-item">
+                    <div class="tool-name">🌐 Security Headers</div>
+                    <div class="tool-desc">CSP, X-Frame-Options, and content type protection</div>
+                </div>
+                <div class="tool-item">
+                    <div class="tool-name">⏱️ Request Protection</div>
+                    <div class="tool-desc">30-second timeouts and sanitized error messages</div>
+                </div>
+            </div>
         </div>
         
         <div class="footer">
