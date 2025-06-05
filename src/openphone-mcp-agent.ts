@@ -70,8 +70,6 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     }
   }
 
-
-
   private addOpenPhoneTools(apiKey: string) {
     const openPhoneClient = new OpenPhoneClient(apiKey);
 
@@ -195,6 +193,197 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             text: summary
           }]
         };
+      }
+    );
+
+    // Fetch Call Transcripts Tool
+    this.server.tool(
+      "fetch-call-transcripts",
+      {
+        inboxPhoneNumber: z.string().describe("Your OpenPhone inbox number (E.164 format like +15555555555) to find transcripts for"),
+        participantPhoneNumber: z.string().optional().describe("Optional: specific participant phone number to filter conversations (E.164 format)"),
+        maxResults: z.number().optional().default(10).describe("Maximum number of calls to fetch transcripts for (default: 10)"),
+        createdAfter: z.string().optional().describe("Optional: filter calls created after this date (ISO 8601 format like 2024-01-01T00:00:00Z)"),
+        createdBefore: z.string().optional().describe("Optional: filter calls created before this date (ISO 8601 format)")
+      },
+      async ({ inboxPhoneNumber, participantPhoneNumber, maxResults = 10, createdAfter, createdBefore }: { 
+        inboxPhoneNumber: string; 
+        participantPhoneNumber?: string;
+        maxResults?: number;
+        createdAfter?: string;
+        createdBefore?: string;
+      }) => {
+        try {
+          // Step 1: List phone numbers to find phoneNumberId
+          const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers();
+          
+          // Find the matching phone number
+          const phoneNumberData = phoneNumbersResponse.data?.find((pn: any) => 
+            pn.number === inboxPhoneNumber || 
+            pn.id === inboxPhoneNumber
+          );
+          
+          if (!phoneNumberData) {
+            return {
+              content: [{
+                type: "text",
+                text: `Error: Could not find phone number ${inboxPhoneNumber} in your OpenPhone workspace. Available numbers: ${phoneNumbersResponse.data?.map((pn: any) => pn.number).join(', ') || 'none'}`
+              }],
+              isError: true
+            };
+          }
+
+          const phoneNumberId = phoneNumberData.id;
+          const userId = phoneNumberData.users?.[0]?.id;
+          
+          // Step 2: List conversations to get participants if not provided
+          let participantsToSearch: string[] = [];
+          
+          if (participantPhoneNumber) {
+            participantsToSearch = [participantPhoneNumber];
+          } else {
+            // Get conversations to find participants
+            const conversationsResponse = await openPhoneClient.listConversations({
+              phoneNumber: phoneNumberId,
+              maxResults: 50
+            });
+            
+            // Extract unique participants from conversations
+            const participants = new Set<string>();
+            conversationsResponse.data?.forEach((conv: any) => {
+              conv.participants?.forEach((participantPhoneNumber: string) => {
+                if (participantPhoneNumber) {
+                  // More permissive filtering - just make sure it's not the same number
+                  const participantNum = participantPhoneNumber;
+                  const inboxNum = inboxPhoneNumber;
+                  
+                  // Check if they're different (handle various formats)
+                  const normalizedParticipant = participantNum.replace(/[^\d]/g, '');
+                  const normalizedInbox = inboxNum.replace(/[^\d]/g, '');
+                  
+                  if (normalizedParticipant !== normalizedInbox && participantNum !== phoneNumberData.number) {
+                    participants.add(participantNum);
+                  }
+                }
+              });
+            });
+            
+            participantsToSearch = Array.from(participants);
+          }
+
+          if (participantsToSearch.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `No conversations found for ${inboxPhoneNumber}. Make sure the number has call history.`
+              }],
+              isError: true
+            };
+          }
+
+          // Step 3: Get calls and transcripts for each participant
+          const allTranscripts: any[] = [];
+          let totalCallsChecked = 0;
+          
+          for (const participant of participantsToSearch) {
+            if (allTranscripts.length >= maxResults) break;
+            
+            try {
+              // List calls with this participant
+              const callsResponse = await openPhoneClient.listCalls({
+                phoneNumberId,
+                participants: [participant],
+                userId,
+                maxResults: Math.min(maxResults - allTranscripts.length, 20),
+                createdAfter,
+                createdBefore
+              });
+              
+              // Step 4: Get transcripts for each call
+              if (callsResponse.data && callsResponse.data.length > 0) {
+                for (const call of callsResponse.data) {
+                  if (allTranscripts.length >= maxResults) break;
+                  totalCallsChecked++;
+                  
+                  try {
+                    const transcriptResponse = await openPhoneClient.getCallTranscript(call.id);
+                    
+                    if (transcriptResponse.data && transcriptResponse.data.status === 'completed' && transcriptResponse.data.dialogue) {
+                      allTranscripts.push({
+                        callId: call.id,
+                        participant: participant,
+                        direction: call.direction,
+                        startedAt: call.startedAt,
+                        answeredAt: call.answeredAt,
+                        endedAt: call.endedAt,
+                        duration: call.duration,
+                        transcript: transcriptResponse.data
+                      });
+                    }
+                  } catch (transcriptError) {
+                    // Transcript not available for this call, skip silently
+                    console.warn(`No transcript available for call ${call.id}`);
+                  }
+                }
+              }
+            } catch (callsError) {
+              console.warn(`Error fetching calls for participant ${participant}:`, callsError);
+            }
+          }
+
+          if (allTranscripts.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `No call transcripts found for ${inboxPhoneNumber}. Checked ${totalCallsChecked} calls. Transcripts are only available on OpenPhone Business plan and for calls where transcription was enabled.`
+              }]
+            };
+          }
+
+          // Format the response
+          const summary = `Found ${allTranscripts.length} call transcripts for ${inboxPhoneNumber} (checked ${totalCallsChecked} calls):\n\n`;
+          
+          let formattedTranscripts = "";
+          allTranscripts.forEach((transcript, index) => {
+            formattedTranscripts += `## Call ${index + 1}\n`;
+            formattedTranscripts += `**Call ID:** ${transcript.callId}\n`;
+            formattedTranscripts += `**Participant:** ${transcript.participant}\n`;
+            formattedTranscripts += `**Direction:** ${transcript.direction}\n`;
+            formattedTranscripts += `**Started:** ${transcript.startedAt}\n`;
+            formattedTranscripts += `**Duration:** ${Math.round(transcript.duration || 0)}s\n`;
+            formattedTranscripts += `**Transcript Duration:** ${Math.round(transcript.transcript.duration || 0)}s\n\n`;
+            
+            if (transcript.transcript.dialogue && transcript.transcript.dialogue.length > 0) {
+              formattedTranscripts += `**Transcript:**\n`;
+              transcript.transcript.dialogue.forEach((segment: any) => {
+                const speaker = segment.userId ? `User ${segment.userId}` : segment.identifier;
+                const timestamp = `[${Math.round(segment.start)}s]`;
+                formattedTranscripts += `${timestamp} **${speaker}:** ${segment.content}\n`;
+              });
+            } else {
+              formattedTranscripts += `**Transcript:** No dialogue available\n`;
+            }
+            
+            formattedTranscripts += `\n---\n\n`;
+          });
+
+          return {
+            content: [{
+              type: "text",
+              text: summary + formattedTranscripts
+            }]
+          };
+          
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{
+              type: "text",
+              text: `Error fetching call transcripts: ${errorMessage}`
+            }],
+            isError: true
+          };
+        }
       }
     );
   }

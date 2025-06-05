@@ -55,4 +55,73 @@ export class OpenPhoneClient {
       contactData
     );
   }
+
+  // List Phone Numbers
+  async listPhoneNumbers(userId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (userId) {
+      params.append('userId', userId);
+    }
+    
+    const endpoint = params.toString() ? `/phone-numbers?${params.toString()}` : '/phone-numbers';
+    return this.request<any>(endpoint);
+  }
+
+  // List Conversations
+  async listConversations(params: {
+    phoneNumber?: string;
+    maxResults?: number;
+  }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    
+    if (params.phoneNumber) {
+      queryParams.append('phoneNumber', params.phoneNumber);
+    }
+    if (params.maxResults) {
+      queryParams.append('maxResults', params.maxResults.toString());
+    }
+    
+    // Default maxResults if not provided
+    if (!params.maxResults) {
+      queryParams.append('maxResults', '10');
+    }
+    
+    const endpoint = `/conversations?${queryParams.toString()}`;
+    return this.request<any>(endpoint);
+  }
+
+  // List Calls
+  async listCalls(params: {
+    phoneNumberId: string;
+    participants: string[];
+    userId?: string;
+    maxResults?: number;
+    pageToken?: string;
+    createdAfter?: string;
+    createdBefore?: string;
+  }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    
+    queryParams.append('phoneNumberId', params.phoneNumberId);
+    params.participants.forEach(participant => queryParams.append('participants', participant));
+    
+    if (params.userId) queryParams.append('userId', params.userId);
+    if (params.maxResults) queryParams.append('maxResults', params.maxResults.toString());
+    if (params.pageToken) queryParams.append('pageToken', params.pageToken);
+    if (params.createdAfter) queryParams.append('createdAfter', params.createdAfter);
+    if (params.createdBefore) queryParams.append('createdBefore', params.createdBefore);
+    
+    // Default maxResults if not provided
+    if (!params.maxResults) {
+      queryParams.append('maxResults', '10');
+    }
+    
+    const endpoint = `/calls?${queryParams.toString()}`;
+    return this.request<any>(endpoint);
+  }
+
+  // Get Call Transcript
+  async getCallTranscript(callId: string): Promise<any> {
+    return this.request<any>(`/call-transcripts/${callId}`);
+  }
 } 
