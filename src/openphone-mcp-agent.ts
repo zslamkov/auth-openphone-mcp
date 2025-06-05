@@ -22,33 +22,47 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
   });
 
   async init() {
+    // Debug: Log all available props and env
+    console.log('MCP Agent Init - Props:', JSON.stringify(this.props, null, 2));
+    console.log('MCP Agent Init - Env keys:', Object.keys(this.env || {}));
+    
     // Check for API key from multiple sources
     const apiKey = await this.getApiKey();
     
     if (!apiKey) {
-      // No API key provided - server will have no tools available
+      console.log('No API key found - server will have no tools available');
       return;
     }
 
+    console.log('API key found, validating...');
+    
     // Validate the API key
     const isValid = await this.validateApiKey(apiKey);
     if (!isValid) {
-      // Invalid API key - server will have no tools available
+      console.log('API key validation failed - server will have no tools available');
       return;
     }
 
+    console.log('API key valid, adding tools...');
+    
     // Add all OpenPhone tools
     this.addOpenPhoneTools(apiKey);
   }
 
   private async getApiKey(): Promise<string | null> {
     // Priority order:
-    // 1. Authorization header (Bearer token)
-    // 2. X-OpenPhone-API-Key header
-    // 3. Environment variable (for server-wide config)
+    // 1. Environment variable (OPENPHONE_API_KEY from Cloudflare env)
+    // 2. Authorization header (Bearer token)
+    // 3. X-OpenPhone-API-Key header
     // 4. URL parameter (deprecated, for backward compatibility)
     
     const props = this.props as Props;
+    
+    // Check environment variable first (most secure for production)
+    const envKey = (this.env as Env).OPENPHONE_API_KEY;
+    if (envKey) {
+      return this.validateApiKeyFormat(envKey);
+    }
     
     // Check Authorization header (Bearer format)
     if (props.authorization) {
@@ -63,15 +77,9 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       return this.validateApiKeyFormat(props['x-openphone-api-key']);
     }
     
-    // Environment variable fallback
-    const envKey = (this.env as Env).OPENPHONE_API_KEY;
-    if (envKey) {
-      return this.validateApiKeyFormat(envKey);
-    }
-    
     // Legacy URL parameter support (deprecated)
     if (props.apiKey) {
-      console.warn('API key in URL parameter is deprecated. Use X-OpenPhone-API-Key header instead.');
+      console.warn('API key in URL parameter is deprecated. Use environment variable instead.');
       return this.validateApiKeyFormat(props.apiKey);
     }
     
