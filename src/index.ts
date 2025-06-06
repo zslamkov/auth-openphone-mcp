@@ -57,7 +57,7 @@ async function handleOAuthFlow(request: Request, url: URL): Promise<Response> {
 			}), {
 				headers: {
 					'Content-Type': 'application/json',
-					'Access-Control-Allow-Origin': 'https://claude.ai',
+					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 				}
@@ -83,7 +83,7 @@ export default {
 			return new Response(null, {
 				status: 204,
 				headers: {
-					'Access-Control-Allow-Origin': 'https://claude.ai',
+					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 					'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 					'Access-Control-Max-Age': '86400',
@@ -513,7 +513,8 @@ function getHomepageHTML(): string {
                 
                 <div>
                     <h3 style="margin-bottom: 1rem; color: #1e293b;">💻 Claude Desktop</h3>
-                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;">Add this to your configuration:</p>
+                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;"><strong>Method 1:</strong> Settings > Integrations > Add custom integration<br>
+                    <strong>Method 2:</strong> Add to configuration file:</p>
             
             <div class="code">
                 <div class="code-header">
@@ -541,9 +542,9 @@ function getHomepageHTML(): string {
                 </div>
                     
                     <div class="highlight" style="margin-top: 1rem;">
-                        <strong>⚠️ Security Notice:</strong> Replace the URL above with:<br>
+                        <strong>✅ Working Configuration:</strong> Replace the URL above with:<br>
                         <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
-                        <strong>Important:</strong> API keys in URLs are visible in logs.
+                        <strong>Note:</strong> API keys in URLs are visible in logs. Deploy your own instance for production use.
                     </div>
                 </div>
             </div>

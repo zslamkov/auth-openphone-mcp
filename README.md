@@ -30,9 +30,17 @@ The easiest way to connect this MCP server to Claude Desktop:
 
 ### 2. Configure Claude Desktop
 
-**⚠️ Security Notice:** The configuration below includes API keys in URLs, which are visible in logs and browser history. This is a limitation of the `mcp-remote` tool.
+**Method 1: Direct Integration (Recommended)**
+1. Open Claude Desktop
+2. Go to **Settings > Integrations**
+3. Click **"Add custom integration"**
+4. Enter:
+   - **Name**: OpenPhone
+   - **URL**: `https://mcp.openphonelabs.com/sse?key=your_actual_api_key`
+5. Replace `your_actual_api_key` with your OpenPhone API key
+6. Click **"Connect"**
 
-**Claude Desktop Configuration:**
+**Method 2: Configuration File**
 Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
@@ -49,6 +57,8 @@ Update your Claude Desktop configuration file (`~/Library/Application Support/Cl
 }
 ```
 
+**⚠️ Security Notice:** Both methods include API keys in URLs, which are visible in logs. For production use, deploy your own instance with environment variables.
+
 **Alternative parameter names (all work the same):**
 - `?key=your_api_key` (recommended - shorter)
 - `?apiKey=your_api_key` (verbose)
@@ -61,8 +71,8 @@ To eliminate the URL parameter security risk:
 3. Use the URL without parameters: `https://your-worker.workers.dev/sse`
 4. Or use the direct MCP connection instead of `mcp-remote`
 
-### 3. Restart Claude Desktop
-That's it! You can now ask Claude to help with OpenPhone tasks.
+### 3. Start Using OpenPhone Tools
+That's it! You should now see OpenPhone tools available in Claude Desktop. You can ask Claude to help with OpenPhone tasks like sending messages or managing contacts.
 
 ## 🛠️ Available Tools
 
