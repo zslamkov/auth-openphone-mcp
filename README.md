@@ -30,7 +30,9 @@ The easiest way to connect this MCP server to Claude Desktop:
 
 ### 2. Configure Claude Desktop
 
-**Recommended Configuration:**
+**⚠️ Security Notice:** The configuration below includes API keys in URLs, which are visible in logs and browser history. This is a limitation of the `mcp-remote` tool.
+
+**Claude Desktop Configuration:**
 Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
@@ -52,10 +54,12 @@ Update your Claude Desktop configuration file (`~/Library/Application Support/Cl
 - `?apiKey=your_api_key` (verbose)
 - `?token=your_api_key` (alternative)
 
-**For Production/Enterprise:**
-For enhanced security, you can set the API key as a Cloudflare Workers environment variable instead:
-1. Set `OPENPHONE_API_KEY` in your Cloudflare Workers environment
-2. Use the URL without parameters: `https://mcp.openphonelabs.com/sse`
+**🔒 For Production/Enterprise Use:**
+To eliminate the URL parameter security risk:
+1. Deploy your own instance of this server to Cloudflare Workers
+2. Set `OPENPHONE_API_KEY` as a Cloudflare Workers environment variable
+3. Use the URL without parameters: `https://your-worker.workers.dev/sse`
+4. Or use the direct MCP connection instead of `mcp-remote`
 
 ### 3. Restart Claude Desktop
 That's it! You can now ask Claude to help with OpenPhone tasks.

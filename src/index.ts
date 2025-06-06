@@ -436,9 +436,9 @@ function getHomepageHTML(): string {
             </div>
             
             <div class="highlight">
-                <strong>🔐 Secure Setup:</strong> Replace the URL above with:<br>
+                <strong>⚠️ Security Notice:</strong> Replace the URL above with:<br>
                 <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
-                <small>Note: For production use, set OPENPHONE_API_KEY as a Cloudflare environment variable.</small>
+                <strong>Important:</strong> API keys in URLs are visible in logs. For production use, set OPENPHONE_API_KEY as a Cloudflare environment variable and use the URL without parameters.
             </div>
         </div>
         
@@ -465,12 +465,12 @@ function getHomepageHTML(): string {
         </div>
 
         <div class="card">
-            <h2><span class="icon">🔒</span>Enterprise Security</h2>
+            <h2><span class="icon">⚠️</span>Security Considerations</h2>
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
+                <strong style="color: #dc2626;">Important Security Notice:</strong><br>
+                Using API keys in URLs exposes them in logs, browser history, and referrer headers. This is a limitation of the <code>mcp-remote</code> tool.
+            </div>
             <div class="tools-grid">
-                <div class="tool-item">
-                    <div class="tool-name">🛡️ Multiple Auth Methods</div>
-                    <div class="tool-desc">Headers, environment variables, or URL parameters with format validation</div>
-                </div>
                 <div class="tool-item">
                     <div class="tool-name">🔍 Input Validation</div>
                     <div class="tool-desc">Phone number format, message length, and API key validation</div>
@@ -482,6 +482,10 @@ function getHomepageHTML(): string {
                 <div class="tool-item">
                     <div class="tool-name">⏱️ Request Protection</div>
                     <div class="tool-desc">30-second timeouts and sanitized error messages</div>
+                </div>
+                <div class="tool-item">
+                    <div class="tool-name">🚀 Enterprise Option</div>
+                    <div class="tool-desc">Deploy your own instance with environment variables for secure auth</div>
                 </div>
             </div>
         </div>
