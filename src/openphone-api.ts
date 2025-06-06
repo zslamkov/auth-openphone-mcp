@@ -26,7 +26,7 @@ interface ApiError {
 
 export class OpenPhoneClient {
   private apiKey: string;
-  private baseUrl: string = 'https://api.openphone.com/v1';
+  private baseUrl = 'https://api.openphone.com/v1';
   private defaultMaxResults = 10;
 
   constructor(apiKey: string) {

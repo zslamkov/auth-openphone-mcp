@@ -22,38 +22,11 @@ interface AuthorizationCode {
 	api_key?: string;
 }
 
-interface AccessToken {
-	access_token: string;
-	token_type: string;
-	expires_in: number;
-	scope: string;
-	api_key: string;
-	created_at: number;
-}
 
 // In-memory storage for demo (in production, use Durable Objects or external storage)
 const clients = new Map<string, OAuthClient>();
-const authCodes = new Map<string, AuthorizationCode>();
-const accessTokens = new Map<string, AccessToken>();
 
-// Pre-register a well-known client for Claude Desktop
-const FIXED_CLIENT_ID = 'openphone-mcp-client';
-clients.set(FIXED_CLIENT_ID, {
-	client_id: FIXED_CLIENT_ID,
-	client_secret: 'not-needed-for-pkce',
-	redirect_uris: ['urn:ietf:wg:oauth:2.0:oob'],
-	scope: 'openphone:read openphone:write openphone:admin',
-	created_at: Date.now()
-});
 
-function generateRandomString(length: number): string {
-	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-	let result = '';
-	for (let i = 0; i < length; i++) {
-		result += chars.charAt(Math.floor(Math.random() * chars.length));
-	}
-	return result;
-}
 
 async function sha256(plain: string): Promise<string> {
 	const encoder = new TextEncoder();
@@ -95,25 +68,22 @@ async function validateStatelessCode(code: string): Promise<AuthorizationCode | 
 		const expectedSignature = await sha256(SECRET_KEY + JSON.stringify(authData));
 		
 		if (signature !== expectedSignature) {
-			console.log('Invalid code signature');
 			return null;
 		}
 		
 		// Check expiration
 		if (authData.expires_at < Date.now()) {
-			console.log('Code expired');
 			return null;
 		}
 		
 		return authData;
 	} catch (error) {
-		console.log('Code validation error:', error);
 		return null;
 	}
 }
 
 // Stateless access token implementation
-async function createStatelessAccessToken(api_key: string, scope: string, expires_in: number = 3600): Promise<string> {
+async function createStatelessAccessToken(api_key: string, scope: string, expires_in = 3600): Promise<string> {
 	const tokenData = {
 		api_key,
 		scope,
@@ -151,20 +121,17 @@ async function validateStatelessAccessToken(token: string): Promise<{ api_key: s
 		const expectedSignature = await sha256(SECRET_KEY + JSON.stringify(tokenData));
 		
 		if (sig !== expectedSignature) {
-			console.log('Invalid token signature');
 			return null;
 		}
 		
 		// Check expiration
 		const now = Math.floor(Date.now() / 1000);
 		if (tokenData.exp < now) {
-			console.log('Token expired');
 			return null;
 		}
 		
 		return { api_key: tokenData.api_key, scope: tokenData.scope };
 	} catch (error) {
-		console.log('Token validation error:', error);
 		return null;
 	}
 }
@@ -203,10 +170,9 @@ async function handleOAuthRegister(request: Request, url: URL): Promise<Response
 
 	try {
 		const body = await request.json() as any;
-		console.log('OAuth register request:', JSON.stringify(body, null, 2));
 		
 		// Use a fixed client ID that persists across worker restarts
-		const clientId = FIXED_CLIENT_ID;
+		const clientId = 'openphone-mcp-client';
 		const clientSecret = 'not-needed-for-pkce';
 
 		// Always accept the out-of-band URN for Claude Desktop
@@ -220,7 +186,6 @@ async function handleOAuthRegister(request: Request, url: URL): Promise<Response
 			created_at: Date.now()
 		};
 
-		console.log('Registering fixed client:', clientId, 'with redirect URIs:', redirectUris);
 		clients.set(clientId, client);
 
 		const response = {
@@ -278,11 +243,8 @@ async function handleOAuthAuthorize(request: Request, url: URL): Promise<Respons
 
 	// Auto-recreate client if not found (handles cold starts)
 	let client = clients.get(clientId);
-	console.log('OAuth authorize - clientId:', clientId, 'found client:', !!client, 'redirect_uri:', redirectUri);
-	console.log('Available clients:', Array.from(clients.keys()));
 	
 	if (!client) {
-		console.log('Auto-recreating client for cold start:', clientId);
 		// Auto-register so the flow survives new isolates
 		client = {
 			client_id: clientId,
@@ -294,12 +256,8 @@ async function handleOAuthAuthorize(request: Request, url: URL): Promise<Respons
 		clients.set(clientId, client);
 	}
 	
-	if (client) {
-		console.log('Client redirect URIs:', client.redirect_uris);
-	}
 	
 	if (!client || !client.redirect_uris.includes(redirectUri)) {
-		console.log('Client validation failed - client:', !!client, 'redirect match:', client?.redirect_uris.includes(redirectUri));
 		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
 			const response: any = { error: 'invalid_client', error_description: `Client ${clientId} not found or invalid redirect URI` };
 			if (state) response.state = state;
@@ -391,7 +349,6 @@ async function handleOAuthAuthorize(request: Request, url: URL): Promise<Respons
 		const code = await createStatelessCode(authCode);
 		authCode.code = code; // Set the actual code value
 
-		console.log('Generated stateless code:', code.substring(0, 20) + '...');
 
 		// Special case for out-of-band URN (used by Claude Desktop)
 		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
@@ -436,8 +393,6 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 		const clientId = params.get('client_id') as string;
 		const codeVerifier = params.get('code_verifier') as string;
 
-		console.log('Token request received - all params:', Array.from(params.entries()));
-		console.log('OAuth token request:', { grantType, code: code?.substring(0, 8) + '...', redirectUri, clientId, codeVerifier: codeVerifier?.substring(0, 8) + '...' });
 
 		if (grantType !== 'authorization_code') {
 			return new Response(JSON.stringify({ error: 'unsupported_grant_type' }), {
@@ -447,23 +402,18 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 		}
 
 		// Validate stateless authorization code
-		console.log('Validating stateless code:', code?.substring(0, 20) + '...');
 		const authCode = await validateStatelessCode(code);
 		
 		if (!authCode) {
-			console.log('Stateless code validation failed');
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' }
 			});
 		}
-		
-		console.log('Stateless code validation succeeded');
 
 		// Validate PKCE
 		const expectedChallenge = await sha256(codeVerifier);
 		if (expectedChallenge !== authCode.code_challenge) {
-			authCodes.delete(code);
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' }
@@ -472,7 +422,6 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 
 		// Validate other parameters
 		if (authCode.client_id !== clientId || authCode.redirect_uri !== redirectUri) {
-			authCodes.delete(code);
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' }
@@ -481,7 +430,6 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 
 		// Generate stateless access token
 		const accessToken = await createStatelessAccessToken(authCode.api_key!, authCode.scope, 3600);
-		console.log('Generated stateless access token:', accessToken.substring(0, 20) + '...');
 
 		const response = {
 			access_token: accessToken,
@@ -526,11 +474,9 @@ async function authGate(request: Request): Promise<{ response?: Response; api_ke
 	}
 	
 	const token = authHeader.slice(7);
-	console.log('Validating stateless access token:', token.substring(0, 20) + '...');
 	
 	const tokenData = await validateStatelessAccessToken(token);
 	if (!tokenData) {
-		console.log('Stateless token validation failed');
 		return {
 			response: new Response('Unauthorized', {
 				status: 401,
@@ -543,83 +489,10 @@ async function authGate(request: Request): Promise<{ response?: Response; api_ke
 			})
 		};
 	}
-	
-	console.log('Stateless token validation succeeded');
 	// Return the API key for downstream handlers
 	return { api_key: tokenData.api_key };
 }
 
-async function handleOAuthFlow(request: Request, url: URL): Promise<Response> {
-	const method = request.method;
-	
-	if (method === 'GET') {
-		// Show API key input form for authentication
-		return new Response(getAuthPageHTML(), {
-			headers: { 
-				'Content-Type': 'text/html',
-				'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com",
-				'X-Frame-Options': 'DENY',
-				'X-Content-Type-Options': 'nosniff',
-				'Referrer-Policy': 'strict-origin-when-cross-origin'
-			}
-		});
-	}
-	
-	if (method === 'POST') {
-		// Handle API key submission
-		const formData = await request.formData();
-		const apiKey = formData.get('api_key') as string;
-		
-		if (!apiKey?.trim()) {
-			return new Response(getAuthPageHTML('API key is required'), {
-				status: 400,
-				headers: { 'Content-Type': 'text/html' }
-			});
-		}
-		
-		// Validate API key by testing with OpenPhone API
-		try {
-			const testResponse = await fetch('https://api.openphone.com/v1/phone-numbers', {
-				headers: {
-					'Authorization': apiKey.trim(),
-					'Content-Type': 'application/json'
-				}
-			});
-			
-			if (!testResponse.ok) {
-				return new Response(getAuthPageHTML('Invalid API key'), {
-					status: 400,
-					headers: { 'Content-Type': 'text/html' }
-				});
-			}
-			
-			// Generate a secure token for this API key
-			const token = btoa(apiKey.trim()).replace(/[+/=]/g, '');
-			
-			// Return success with token that Claude can use
-			return new Response(JSON.stringify({
-				access_token: token,
-				token_type: 'bearer',
-				expires_in: 3600
-			}), {
-				headers: {
-					'Content-Type': 'application/json',
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-				}
-			});
-			
-		} catch (error) {
-			return new Response(getAuthPageHTML('Failed to validate API key'), {
-				status: 500,
-				headers: { 'Content-Type': 'text/html' }
-			});
-		}
-	}
-	
-	return new Response('Method not allowed', { status: 405 });
-}
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -660,10 +533,6 @@ export default {
 		const searchParams = Object.fromEntries(url.searchParams.entries());
 		ctx.props = { ...headers, ...searchParams };
 
-		// Handle OAuth authentication for Claude web app (legacy)
-		if (url.pathname === "/auth") {
-			return handleOAuthFlow(request, url);
-		}
 
 		// Handle MCP SSE endpoint (protected)
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
@@ -674,8 +543,6 @@ export default {
 			if (authResult.api_key) {
 				headers['x-openphone-api-key'] = authResult.api_key;
 				ctx.props = { ...headers, ...searchParams };
-				console.log('Setting API key for SSE MCP agent:', authResult.api_key.substring(0, 8) + '...');
-				console.log('Props keys being passed to SSE:', Object.keys(ctx.props));
 			}
 			
 			return OpenPhoneMCPAgent.serveSSE("/sse").fetch(request, env, ctx);
@@ -690,8 +557,6 @@ export default {
 			if (authResult.api_key) {
 				headers['x-openphone-api-key'] = authResult.api_key;
 				ctx.props = { ...headers, ...searchParams };
-				console.log('Setting API key for MCP agent:', authResult.api_key.substring(0, 8) + '...');
-				console.log('Props keys being passed to MCP:', Object.keys(ctx.props));
 			}
 			
 			return OpenPhoneMCPAgent.serve("/mcp").fetch(request, env, ctx);
@@ -1126,9 +991,9 @@ function getHomepageHTML(): string {
                 </div>
                     
                     <div class="highlight" style="margin-top: 1rem;">
-                        <strong>✅ Working Configuration:</strong> Replace the URL above with:<br>
-                        <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
-                        <strong>Note:</strong> API keys in URLs are visible in logs. Deploy your own instance for production use.
+                        <strong>✅ Secure Authentication:</strong> This server uses OAuth 2.1 + PKCE for secure authentication.<br>
+                        Claude Desktop will prompt for your API key during the first connection.<br>
+                        <strong>Note:</strong> No API keys in URLs - your credentials stay secure.
                     </div>
                 </div>
             </div>
@@ -1157,10 +1022,10 @@ function getHomepageHTML(): string {
         </div>
 
         <div class="card">
-            <h2><span class="icon">⚠️</span>Security Considerations</h2>
-            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
-                <strong style="color: #dc2626;">Important Security Notice:</strong><br>
-                Using API keys in URLs exposes them in logs, browser history, and referrer headers. This is a limitation of the <code>mcp-remote</code> tool.
+            <h2><span class="icon">🔐</span>Security Features</h2>
+            <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
+                <strong style="color: #059669;">Enhanced Security:</strong><br>
+                OAuth 2.1 + PKCE authentication ensures your API keys are never exposed in URLs, logs, or browser history.
             </div>
             <div class="tools-grid">
                 <div class="tool-item">
@@ -1176,8 +1041,8 @@ function getHomepageHTML(): string {
                     <div class="tool-desc">30-second timeouts and sanitized error messages</div>
                 </div>
                 <div class="tool-item">
-                    <div class="tool-name">🚀 Enterprise Option</div>
-                    <div class="tool-desc">Deploy your own instance with environment variables for secure auth</div>
+                    <div class="tool-name">🔒 OAuth 2.1 + PKCE</div>
+                    <div class="tool-desc">Industry-standard authentication with PKCE for enhanced security</div>
                 </div>
             </div>
         </div>
@@ -1236,185 +1101,6 @@ function getHomepageHTML(): string {
   `;
 }
 
-function getAuthPageHTML(error?: string): string {
-	return `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Connect OpenPhone to Claude</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body { 
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
-            min-height: 100vh;
-            color: #1a202c;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-        }
-        
-        .auth-container {
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(20px);
-            padding: 3rem;
-            border-radius: 24px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
-            border: 1px solid rgba(255,255,255,0.3);
-            max-width: 500px;
-            width: 100%;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .auth-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
-        }
-        
-        h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 50%, #ec4899 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-            text-align: center;
-        }
-        
-        .subtitle {
-            color: #64748b;
-            text-align: center;
-            margin-bottom: 2rem;
-            font-size: 1.1rem;
-        }
-        
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: #374151;
-        }
-        
-        input {
-            width: 100%;
-            padding: 0.875rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
-            font-size: 1rem;
-            transition: border-color 0.2s ease;
-            font-family: 'SF Mono', 'Monaco', monospace;
-        }
-        
-        input:focus {
-            outline: none;
-            border-color: #8b5cf6;
-            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
-        }
-        
-        .submit-btn {
-            width: 100%;
-            background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-            color: white;
-            border: none;
-            padding: 1rem;
-            border-radius: 12px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s ease;
-        }
-        
-        .submit-btn:hover {
-            transform: translateY(-2px);
-        }
-        
-        .submit-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .error {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #dc2626;
-            padding: 1rem;
-            border-radius: 12px;
-            margin-bottom: 1.5rem;
-            font-size: 0.9rem;
-        }
-        
-        .help-text {
-            font-size: 0.875rem;
-            color: #6b7280;
-            margin-top: 0.5rem;
-        }
-        
-        .help-link {
-            color: #8b5cf6;
-            text-decoration: none;
-        }
-        
-        .help-link:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class="auth-container">
-        <h1>📞 Connect OpenPhone</h1>
-        <p class="subtitle">Enter your OpenPhone API key to connect</p>
-        
-        ${error ? `<div class="error">❌ ${error}</div>` : ''}
-        
-        <form method="POST" action="/auth">
-            <div class="form-group">
-                <label for="api_key">OpenPhone API Key</label>
-                <input 
-                    type="password" 
-                    id="api_key" 
-                    name="api_key" 
-                    placeholder="Enter your OpenPhone API key"
-                    required
-                    autocomplete="off"
-                >
-                <div class="help-text">
-                    Get your API key from your <a href="https://app.openphone.com" target="_blank" class="help-link">OpenPhone dashboard</a> → Settings → Integrations → API
-                </div>
-            </div>
-            
-            <button type="submit" class="submit-btn">
-                Connect to Claude
-            </button>
-        </form>
-    </div>
-</body>
-</html>
-	`;
-}
 
 function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: string, state: string | null, codeChallenge: string, codeChallengeMethod: string, error?: string): string {
 	return `
