@@ -326,21 +326,59 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 
 		// Validate API key
 		try {
+			const trimmedApiKey = apiKey.trim();
+			
+			// Basic format validation
+			if (trimmedApiKey.length < 16 || trimmedApiKey.length > 128) {
+				return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, 'API key must be 16-128 characters long'), {
+					status: 400,
+					headers: { 'Content-Type': 'text/html' }
+				});
+			}
+
+			if (!/^[a-zA-Z0-9._-]+$/.test(trimmedApiKey)) {
+				return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, 'API key contains invalid characters'), {
+					status: 400,
+					headers: { 'Content-Type': 'text/html' }
+				});
+			}
+
 			const testResponse = await fetch('https://api.openphone.com/v1/phone-numbers', {
 				headers: {
-					'Authorization': apiKey.trim(),
+					'Authorization': trimmedApiKey,
 					'Content-Type': 'application/json'
-				}
+				},
+				signal: AbortSignal.timeout(10000) // 10 second timeout
 			});
 
 			if (!testResponse.ok) {
-				return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, 'Invalid API key'), {
+				// More specific error messages based on status code
+				let errorMessage = 'Invalid API key';
+				if (testResponse.status === 401) {
+					errorMessage = 'API key is invalid or expired';
+				} else if (testResponse.status === 403) {
+					errorMessage = 'API key does not have required permissions';
+				} else if (testResponse.status === 429) {
+					errorMessage = 'Too many API requests. Please try again later';
+				}
+				
+				return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, errorMessage), {
 					status: 400,
 					headers: { 'Content-Type': 'text/html' }
 				});
 			}
 		} catch (error) {
-			return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, 'Failed to validate API key'), {
+			// More specific error handling
+			let errorMessage = 'Failed to validate API key';
+			if (error instanceof Error) {
+				if (error.name === 'AbortError') {
+					errorMessage = 'API validation timed out. Please try again';
+				} else if (error.message.includes('fetch')) {
+					errorMessage = 'Network error during API validation';
+				}
+			}
+			
+			return new Response(getAuthorizationPageHTML(clientId, redirectUri, scope, state, codeChallenge, codeChallengeMethod, errorMessage), {
 				status: 500,
 				headers: { 'Content-Type': 'text/html' }
 			});
@@ -366,9 +404,12 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
 			const response: any = { code };
 			if (state) response.state = state;
-			return new Response(JSON.stringify(response), {
+			
+			// Return HTML with success message and auto-close functionality
+			const successHTML = getSuccessPageHTML(JSON.stringify(response));
+			return new Response(successHTML, {
 				headers: { 
-					'Content-Type': 'application/json',
+					'Content-Type': 'text/html',
 					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
@@ -1363,6 +1404,184 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
             </div>
         </form>
     </div>
+</body>
+</html>
+	`;
+}
+
+function getSuccessPageHTML(responseData: string): string {
+	return `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Successful</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
+            min-height: 100vh;
+            color: #1a202c;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .success-container {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            padding: 3rem;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
+            border: 1px solid rgba(255,255,255,0.3);
+            max-width: 500px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            text-align: center;
+        }
+        
+        .success-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+        }
+        
+        .success-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: bounce 1s ease-in-out;
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+        
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
+        }
+        
+        .subtitle {
+            color: #64748b;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+        
+        .countdown {
+            color: #374151;
+            font-size: 0.9rem;
+            margin-top: 1.5rem;
+        }
+        
+        .close-btn {
+            background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            margin-top: 1rem;
+        }
+        
+        .close-btn:hover {
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="success-container">
+        <div class="success-icon">✅</div>
+        <h1>Authorization Successful!</h1>
+        <p class="subtitle">Your OpenPhone account has been connected to Claude Desktop.</p>
+        <p>You can now close this tab and start using OpenPhone tools in Claude.</p>
+        
+        <button onclick="closeTab()" class="close-btn">Close Tab</button>
+        
+        <div class="countdown">
+            This tab will automatically close in <span id="countdown">5</span> seconds
+        </div>
+    </div>
+
+    <!-- Hidden response data for Claude Desktop -->
+    <script type="application/json" id="oauth-response">${responseData}</script>
+
+    <script>
+        let timeLeft = 5;
+        const countdownElement = document.getElementById('countdown');
+        
+        function updateCountdown() {
+            countdownElement.textContent = timeLeft;
+            timeLeft--;
+            
+            if (timeLeft < 0) {
+                closeTab();
+            }
+        }
+        
+        function closeTab() {
+            // Try multiple methods to close the tab
+            try {
+                window.close();
+            } catch (e) {
+                // If window.close() doesn't work, try parent window
+                try {
+                    if (window.parent && window.parent !== window) {
+                        window.parent.close();
+                    }
+                } catch (e2) {
+                    // As a last resort, redirect to a blank page
+                    window.location.href = 'about:blank';
+                }
+            }
+        }
+        
+        // Start countdown
+        const interval = setInterval(updateCountdown, 1000);
+        
+        // Also try to close immediately for OAuth flows that support it
+        setTimeout(() => {
+            // Some OAuth implementations expect the response data to be available
+            const responseData = document.getElementById('oauth-response').textContent;
+            if (window.opener) {
+                // If opened by another window, try to post message back
+                try {
+                    window.opener.postMessage({
+                        type: 'oauth_success',
+                        data: JSON.parse(responseData)
+                    }, '*');
+                } catch (e) {
+                    // Ignore if parsing fails
+                }
+            }
+        }, 500);
+    </script>
 </body>
 </html>
 	`;
