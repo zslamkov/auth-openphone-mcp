@@ -7,13 +7,15 @@ A production-ready remote Model Context Protocol (MCP) server that provides Open
 - **📱 Messaging**: Send individual or bulk text messages via OpenPhone
 - **👥 Contact Management**: Create and manage OpenPhone contacts
 - **📞 Call Transcripts**: Fetch and analyze call transcripts (Business plan required)
-- **🔐 Enterprise Security**: Multiple authentication methods, input validation, security headers
+- **🔐 OAuth 2.1 + PKCE**: Industry-standard authentication with enhanced security
 - **⚡ Fast**: Powered by Cloudflare Workers for global edge deployment
 - **🎨 Modern UI**: Beautiful homepage with setup instructions
 
 ## 🔒 Security Features
 
-- **Multiple Authentication Methods**: Headers, environment variables, or URL parameters
+- **OAuth 2.1 + PKCE**: Industry-standard authentication prevents API key exposure
+- **Stateless Tokens**: JWT-style tokens with embedded signatures survive worker restarts
+- **No URLs Parameters**: API keys never exposed in logs, browser history, or referrer headers
 - **Input Validation**: Phone number format validation, message length limits
 - **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options
 - **Request Timeouts**: 30-second timeout protection
@@ -36,9 +38,9 @@ The easiest way to connect this MCP server to Claude Desktop:
 3. Click **"Add custom integration"**
 4. Enter:
    - **Name**: OpenPhone
-   - **URL**: `https://mcp.openphonelabs.com/sse?key=your_actual_api_key`
-5. Replace `your_actual_api_key` with your OpenPhone API key
-6. Click **"Connect"**
+   - **URL**: `https://mcp.openphonelabs.com/sse`
+5. Click **"Connect"**
+6. When prompted, enter your OpenPhone API key securely
 
 **Method 2: Configuration File**
 Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -50,26 +52,17 @@ Update your Claude Desktop configuration file (`~/Library/Application Support/Cl
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://mcp.openphonelabs.com/sse?key=your_actual_api_key"
+        "https://mcp.openphonelabs.com/sse"
       ]
     }
   }
 }
 ```
 
-**⚠️ Security Notice:** Both methods include API keys in URLs, which are visible in logs. For production use, deploy your own instance with environment variables.
-
-**Alternative parameter names (all work the same):**
-- `?key=your_api_key` (recommended - shorter)
-- `?apiKey=your_api_key` (verbose)
-- `?token=your_api_key` (alternative)
-
-**🔒 For Production/Enterprise Use:**
-To eliminate the URL parameter security risk:
-1. Deploy your own instance of this server to Cloudflare Workers
-2. Set `OPENPHONE_API_KEY` as a Cloudflare Workers environment variable
-3. Use the URL without parameters: `https://your-worker.workers.dev/sse`
-4. Or use the direct MCP connection instead of `mcp-remote`
+**🔐 Enhanced Security:**
+- OAuth 2.1 + PKCE authentication ensures your API keys are never exposed in URLs
+- Claude Desktop will securely prompt for your API key during the first connection
+- All authentication tokens are stateless and survive Cloudflare Workers restarts
 
 ### 3. Start Using OpenPhone Tools
 That's it! You should now see OpenPhone tools available in Claude Desktop. You can ask Claude to help with OpenPhone tasks like sending messages or managing contacts.
@@ -115,7 +108,8 @@ Once configured, you can ask Claude to help with tasks like:
    npx @modelcontextprotocol/inspector@latest
    ```
    - Set Transport Type to "SSE"
-   - Use URL: `http://localhost:8787/sse?apiKey=YOUR_API_KEY`
+   - Use URL: `http://localhost:8787/sse`
+   - When prompted, enter your OpenPhone API key
 
 ### Local Testing with Claude Desktop
 ```json
@@ -125,7 +119,7 @@ Once configured, you can ask Claude to help with tasks like:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://localhost:8787/sse?apiKey=YOUR_OPENPHONE_API_KEY"
+        "http://localhost:8787/sse"
       ]
     }
   }
@@ -157,11 +151,13 @@ Configure custom routes in `wrangler.jsonc`:
 - **Runtime**: Cloudflare Workers (V8 isolates)
 - **Framework**: MCP SDK with Durable Objects
 - **API**: OpenPhone REST API v1
-- **Authentication**: API key via URL parameters
+- **Authentication**: OAuth 2.1 + PKCE with stateless tokens
 - **Deployment**: Cloudflare edge locations globally
 
 ### Security Model
-- **Multiple Auth Methods**: Headers (preferred), environment variables, URL parameters (deprecated)
+- **OAuth 2.1 + PKCE**: Industry-standard authentication with Proof Key for Code Exchange
+- **Stateless Tokens**: JWT-style tokens with embedded signatures survive worker restarts
+- **No URL Parameters**: API keys never exposed in URLs, logs, or browser history
 - **Input Validation**: Phone number format, message length, API key format validation
 - **Security Headers**: Content Security Policy, X-Frame-Options, X-Content-Type-Options
 - **Error Sanitization**: Generic error messages prevent information disclosure
@@ -179,15 +175,25 @@ src/
 
 ## 🔧 Configuration
 
-### Authentication Priority Order
-1. **Authorization Header**: `Authorization: Bearer YOUR_API_KEY`
-2. **Custom Header**: `X-OpenPhone-API-Key: YOUR_API_KEY`
-3. **Environment Variable**: `OPENPHONE_API_KEY=YOUR_API_KEY`
-4. **URL Parameter** (deprecated): `?apiKey=YOUR_API_KEY`
+### OAuth 2.1 + PKCE Authentication
+This server implements industry-standard OAuth 2.1 with PKCE (Proof Key for Code Exchange):
 
-### Environment Variables
-Set in Cloudflare Workers or local environment:
-- `OPENPHONE_API_KEY`: Your OpenPhone API key
+1. **Authorization Endpoint**: `/authorize` - Handles consent and API key validation
+2. **Token Endpoint**: `/token` - Exchanges authorization codes for access tokens  
+3. **Discovery Endpoint**: `/.well-known/oauth-authorization-server` - OAuth metadata
+4. **Registration Endpoint**: `/register` - Dynamic client registration
+
+### Authentication Flow
+1. Claude Desktop registers as OAuth client
+2. User redirected to consent page for API key entry
+3. Server validates API key against OpenPhone API
+4. Authorization code generated with embedded API key
+5. Code exchanged for stateless access token
+6. Token validates requests to protected MCP endpoints
+
+### Environment Variables (Optional)
+Set in Cloudflare Workers for additional security:
+- `OPENPHONE_API_KEY`: Pre-configured API key (bypasses OAuth for testing)
 
 ## 📋 Requirements
 
@@ -205,10 +211,11 @@ Set in Cloudflare Workers or local environment:
 ### Common Issues
 
 **"No tools available"**
-- Check your API key is correct and properly formatted
-- Verify authentication method (environment variable, header, or URL parameter)
-- Ensure your OpenPhone account has API access enabled
+- Check your API key is correct and properly formatted  
+- Ensure you completed the OAuth authentication flow when prompted
+- Verify your OpenPhone account has API access enabled
 - Check API key length (should be 16-128 characters) and contains only valid characters
+- Try restarting Claude Desktop to refresh the OAuth connection
 
 **"Error fetching call transcripts"**
 - Call transcripts require OpenPhone Business plan
@@ -228,10 +235,11 @@ Set in Cloudflare Workers or local environment:
 ## 🤝 Contributing
 
 This project demonstrates building production-ready remote MCP servers with:
-- Simple API key authentication
-- Modern UI with setup instructions  
+- OAuth 2.1 + PKCE authentication
+- Stateless token architecture for Cloudflare Workers
+- Modern UI with secure consent flow
 - Comprehensive error handling
-- Edge deployment with Cloudflare Workers
+- Edge deployment with global scalability
 
 Contributions welcome! Please feel free to submit issues and pull requests.
 
