@@ -72,7 +72,14 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       const bearerMatch = props.authorization.match(/^Bearer\s+(.+)$/i);
       if (bearerMatch) {
         console.log('Using API key from Authorization header');
-        return this.validateApiKeyFormat(bearerMatch[1]);
+        // Decode token back to API key (for Claude web app integration)
+        try {
+          const decodedKey = atob(bearerMatch[1]);
+          return this.validateApiKeyFormat(decodedKey);
+        } catch {
+          // If decode fails, treat as direct API key
+          return this.validateApiKeyFormat(bearerMatch[1]);
+        }
       }
     }
     

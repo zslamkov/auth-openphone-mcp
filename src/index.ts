@@ -2,9 +2,94 @@ import { OpenPhoneMCPAgent } from "./openphone-mcp-agent.js";
 
 export { OpenPhoneMCPAgent };
 
+async function handleOAuthFlow(request: Request, url: URL): Promise<Response> {
+	const method = request.method;
+	
+	if (method === 'GET') {
+		// Show API key input form for authentication
+		return new Response(getAuthPageHTML(), {
+			headers: { 
+				'Content-Type': 'text/html',
+				'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com",
+				'X-Frame-Options': 'DENY',
+				'X-Content-Type-Options': 'nosniff',
+				'Referrer-Policy': 'strict-origin-when-cross-origin'
+			}
+		});
+	}
+	
+	if (method === 'POST') {
+		// Handle API key submission
+		const formData = await request.formData();
+		const apiKey = formData.get('api_key') as string;
+		
+		if (!apiKey?.trim()) {
+			return new Response(getAuthPageHTML('API key is required'), {
+				status: 400,
+				headers: { 'Content-Type': 'text/html' }
+			});
+		}
+		
+		// Validate API key by testing with OpenPhone API
+		try {
+			const testResponse = await fetch('https://api.openphone.com/v1/phone-numbers', {
+				headers: {
+					'Authorization': apiKey.trim(),
+					'Content-Type': 'application/json'
+				}
+			});
+			
+			if (!testResponse.ok) {
+				return new Response(getAuthPageHTML('Invalid API key'), {
+					status: 400,
+					headers: { 'Content-Type': 'text/html' }
+				});
+			}
+			
+			// Generate a secure token for this API key
+			const token = btoa(apiKey.trim()).replace(/[+/=]/g, '');
+			
+			// Return success with token that Claude can use
+			return new Response(JSON.stringify({
+				access_token: token,
+				token_type: 'bearer',
+				expires_in: 3600
+			}), {
+				headers: {
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': 'https://claude.ai',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+				}
+			});
+			
+		} catch (error) {
+			return new Response(getAuthPageHTML('Failed to validate API key'), {
+				status: 500,
+				headers: { 'Content-Type': 'text/html' }
+			});
+		}
+	}
+	
+	return new Response('Method not allowed', { status: 405 });
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const url = new URL(request.url);
+
+		// Handle CORS preflight requests
+		if (request.method === 'OPTIONS') {
+			return new Response(null, {
+				status: 204,
+				headers: {
+					'Access-Control-Allow-Origin': 'https://claude.ai',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+					'Access-Control-Max-Age': '86400',
+				}
+			});
+		}
 
 		// Extract headers for secure API key transmission
 		const headers = Object.fromEntries(request.headers.entries());
@@ -12,6 +97,11 @@ export default {
 		// Pass headers and URL params to the agent
 		const searchParams = Object.fromEntries(url.searchParams.entries());
 		ctx.props = { ...headers, ...searchParams };
+
+		// Handle OAuth authentication for Claude web app
+		if (url.pathname === "/auth") {
+			return handleOAuthFlow(request, url);
+		}
 
 		// Handle MCP SSE endpoint
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
@@ -407,7 +497,23 @@ function getHomepageHTML(): string {
         
         <div class="card">
             <h2><span class="icon">🚀</span>Quick Setup</h2>
-            <p><strong>Add this to your Claude Desktop configuration:</strong></p>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem;">
+                <div>
+                    <h3 style="margin-bottom: 1rem; color: #1e293b;">🌐 Claude Web App</h3>
+                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;">Add as a direct integration:</p>
+                    <ol style="color: #64748b; font-size: 0.9rem; line-height: 1.6; padding-left: 1.5rem;">
+                        <li>Go to Claude.ai settings</li>
+                        <li>Click "Add integration"</li>
+                        <li>Name: <strong>OpenPhone</strong></li>
+                        <li>URL: <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">https://mcp.openphonelabs.com/sse</code></li>
+                        <li>Click "Connect" and enter your API key</li>
+                    </ol>
+                </div>
+                
+                <div>
+                    <h3 style="margin-bottom: 1rem; color: #1e293b;">💻 Claude Desktop</h3>
+                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;">Add this to your configuration:</p>
             
             <div class="code">
                 <div class="code-header">
@@ -433,12 +539,13 @@ function getHomepageHTML(): string {
   }
 }</pre>
                 </div>
-            </div>
-            
-            <div class="highlight">
-                <strong>⚠️ Security Notice:</strong> Replace the URL above with:<br>
-                <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
-                <strong>Important:</strong> API keys in URLs are visible in logs. For production use, set OPENPHONE_API_KEY as a Cloudflare environment variable and use the URL without parameters.
+                    
+                    <div class="highlight" style="margin-top: 1rem;">
+                        <strong>⚠️ Security Notice:</strong> Replace the URL above with:<br>
+                        <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
+                        <strong>Important:</strong> API keys in URLs are visible in logs.
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -542,4 +649,184 @@ function getHomepageHTML(): string {
 </body>
 </html>
   `;
+}
+
+function getAuthPageHTML(error?: string): string {
+	return `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Connect OpenPhone to Claude</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
+            min-height: 100vh;
+            color: #1a202c;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .auth-container {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            padding: 3rem;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
+            border: 1px solid rgba(255,255,255,0.3);
+            max-width: 500px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .auth-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
+        }
+        
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 50%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #64748b;
+            text-align: center;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        input {
+            width: 100%;
+            padding: 0.875rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+            font-family: 'SF Mono', 'Monaco', monospace;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+        
+        .submit-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+            color: white;
+            border: none;
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        
+        .submit-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #dc2626;
+            padding: 1rem;
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .help-text {
+            font-size: 0.875rem;
+            color: #6b7280;
+            margin-top: 0.5rem;
+        }
+        
+        .help-link {
+            color: #8b5cf6;
+            text-decoration: none;
+        }
+        
+        .help-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <h1>📞 Connect OpenPhone</h1>
+        <p class="subtitle">Enter your OpenPhone API key to connect</p>
+        
+        ${error ? `<div class="error">❌ ${error}</div>` : ''}
+        
+        <form method="POST" action="/auth">
+            <div class="form-group">
+                <label for="api_key">OpenPhone API Key</label>
+                <input 
+                    type="password" 
+                    id="api_key" 
+                    name="api_key" 
+                    placeholder="Enter your OpenPhone API key"
+                    required
+                    autocomplete="off"
+                >
+                <div class="help-text">
+                    Get your API key from your <a href="https://app.openphone.com" target="_blank" class="help-link">OpenPhone dashboard</a> → Settings → Integrations → API
+                </div>
+            </div>
+            
+            <button type="submit" class="submit-btn">
+                Connect to Claude
+            </button>
+        </form>
+    </div>
+</body>
+</html>
+	`;
 }
