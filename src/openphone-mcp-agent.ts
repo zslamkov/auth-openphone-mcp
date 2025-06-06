@@ -3,10 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OpenPhoneClient } from "./openphone-api.js";
 
-// Props that can be passed from request headers or URL parameters (legacy)
+// Props that can be passed from URL parameters or headers
 type Props = {
-  apiKey?: string;        // API key from URL parameter (deprecated - use headers)
-  'x-openphone-api-key'?: string;  // API key from header (preferred)
+  apiKey?: string;        // API key from URL parameter
+  key?: string;           // Alternative short parameter name
+  token?: string;         // Alternative token parameter name
+  'x-openphone-api-key'?: string;  // API key from header
   'authorization'?: string;        // Bearer token format
 }
 
@@ -53,14 +55,15 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     // Priority order:
     // 1. Environment variable (OPENPHONE_API_KEY from Cloudflare env)
     // 2. Authorization header (Bearer token)
-    // 3. X-OpenPhone-API-Key header
-    // 4. URL parameter (deprecated, for backward compatibility)
+    // 3. X-OpenPhone-API-Key header  
+    // 4. URL parameters (apiKey, key, token)
     
     const props = this.props as Props;
     
     // Check environment variable first (most secure for production)
     const envKey = (this.env as Env).OPENPHONE_API_KEY;
     if (envKey) {
+      console.log('Using API key from environment variable');
       return this.validateApiKeyFormat(envKey);
     }
     
@@ -68,21 +71,34 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     if (props.authorization) {
       const bearerMatch = props.authorization.match(/^Bearer\s+(.+)$/i);
       if (bearerMatch) {
+        console.log('Using API key from Authorization header');
         return this.validateApiKeyFormat(bearerMatch[1]);
       }
     }
     
     // Check custom header
     if (props['x-openphone-api-key']) {
+      console.log('Using API key from X-OpenPhone-API-Key header');
       return this.validateApiKeyFormat(props['x-openphone-api-key']);
     }
     
-    // Legacy URL parameter support (deprecated)
+    // Check URL parameters (multiple parameter names supported)
     if (props.apiKey) {
-      console.warn('API key in URL parameter is deprecated. Use environment variable instead.');
+      console.log('Using API key from apiKey URL parameter');
       return this.validateApiKeyFormat(props.apiKey);
     }
     
+    if (props.key) {
+      console.log('Using API key from key URL parameter');
+      return this.validateApiKeyFormat(props.key);
+    }
+    
+    if (props.token) {
+      console.log('Using API key from token URL parameter');
+      return this.validateApiKeyFormat(props.token);
+    }
+    
+    console.log('No API key found in any source');
     return null;
   }
 

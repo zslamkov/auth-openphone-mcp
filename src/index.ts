@@ -436,9 +436,9 @@ function getHomepageHTML(): string {
             </div>
             
             <div class="highlight">
-                <strong>🔐 Set your API key as environment variable:</strong><br>
-                <code>OPENPHONE_API_KEY=your_actual_api_key</code><br>
-                Or use the X-OpenPhone-API-Key header for secure transmission.
+                <strong>🔐 Secure Setup:</strong> Replace the URL above with:<br>
+                <code>https://mcp.openphonelabs.com/sse?key=your_actual_api_key</code><br>
+                <small>Note: For production use, set OPENPHONE_API_KEY as a Cloudflare environment variable.</small>
             </div>
         </div>
         

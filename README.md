@@ -28,15 +28,11 @@ The easiest way to connect this MCP server to Claude Desktop:
 2. Go to Settings → Integrations → API
 3. Generate an API key
 
-### 2. Configure Claude Desktop (Secure Method)
+### 2. Configure Claude Desktop
 
-**Option A: Environment Variable (Recommended)**
-Set your API key as an environment variable:
-```bash
-export OPENPHONE_API_KEY=your_actual_api_key
-```
+**Recommended Configuration:**
+Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
-Then configure Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -44,47 +40,22 @@ Then configure Claude Desktop (`~/Library/Application Support/Claude/claude_desk
       "command": "npx",
       "args": [
         "mcp-remote",
-        "https://mcp.openphonelabs.com/sse"
+        "https://mcp.openphonelabs.com/sse?key=your_actual_api_key"
       ]
     }
   }
 }
 ```
 
-**Option B: Header Authentication**
-Configure with custom headers:
-```json
-{
-  "mcpServers": {
-    "openphone": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.openphonelabs.com/sse"
-      ],
-      "env": {
-        "X_OPENPHONE_API_KEY": "your_actual_api_key"
-      }
-    }
-  }
-}
-```
+**Alternative parameter names (all work the same):**
+- `?key=your_api_key` (recommended - shorter)
+- `?apiKey=your_api_key` (verbose)
+- `?token=your_api_key` (alternative)
 
-**Option C: URL Parameter (Deprecated)**
-⚠️ **Not recommended for production** - API keys visible in logs:
-```json
-{
-  "mcpServers": {
-    "openphone": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.openphonelabs.com/sse?apiKey=your_actual_api_key"
-      ]
-    }
-  }
-}
-```
+**For Production/Enterprise:**
+For enhanced security, you can set the API key as a Cloudflare Workers environment variable instead:
+1. Set `OPENPHONE_API_KEY` in your Cloudflare Workers environment
+2. Use the URL without parameters: `https://mcp.openphonelabs.com/sse`
 
 ### 3. Restart Claude Desktop
 That's it! You can now ask Claude to help with OpenPhone tasks.
