@@ -301,6 +301,8 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 		const formData = await request.formData();
 		const apiKey = formData.get('api_key') as string;
 		const approved = formData.get('approved') === 'true';
+		
+		console.log('Form submission received:', { approved, apiKeyLength: apiKey?.length, redirectUri });
 
 		if (!approved) {
 			if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
@@ -399,29 +401,26 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 		const code = await createStatelessCode(authCode, env);
 		authCode.code = code; // Set the actual code value
 
-
-		// Special case for out-of-band URN (used by Claude Desktop)
-		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
-			const response: any = { code };
-			if (state) response.state = state;
-			
-			// Return HTML with success message and auto-close functionality
-			const successHTML = getSuccessPageHTML(JSON.stringify(response));
-			return new Response(successHTML, {
-				headers: { 
-					'Content-Type': 'text/html',
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-				}
-			});
-		}
-
-		// Redirect back with code for regular HTTPS redirect URIs
-		const successUrl = new URL(redirectUri);
-		successUrl.searchParams.set('code', code);
-		if (state) successUrl.searchParams.set('state', state);
-		return Response.redirect(successUrl.toString(), 302);
+		console.log('Returning success page with code:', code);
+		
+		// Always show success page for browser-based OAuth form submissions
+		// This handles the user-facing portion where they need to see confirmation
+		// The actual OAuth flow continues programmatically in the background
+		const response: any = { code };
+		if (state) response.state = state;
+		
+		const successHTML = getSuccessPageHTML(JSON.stringify(response), redirectUri, state);
+		return new Response(successHTML, {
+			headers: { 
+				'Content-Type': 'text/html',
+				'Access-Control-Allow-Origin': '*',
+				'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+				'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src 'self'",
+				'X-Frame-Options': 'SAMEORIGIN',
+				'X-Content-Type-Options': 'nosniff'
+			}
+		});
 	}
 
 	return new Response('Method not allowed', { status: 405 });
@@ -1409,7 +1408,7 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
 	`;
 }
 
-function getSuccessPageHTML(responseData: string): string {
+function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: string | null): string {
 	return `
 <!DOCTYPE html>
 <html>
@@ -1491,28 +1490,7 @@ function getSuccessPageHTML(responseData: string): string {
             font-size: 1.1rem;
         }
         
-        .countdown {
-            color: #374151;
-            font-size: 0.9rem;
-            margin-top: 1.5rem;
-        }
-        
-        .close-btn {
-            background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 12px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s ease;
-            margin-top: 1rem;
-        }
-        
-        .close-btn:hover {
-            transform: translateY(-2px);
-        }
+
     </style>
 </head>
 <body>
@@ -1520,12 +1498,16 @@ function getSuccessPageHTML(responseData: string): string {
         <div class="success-icon">✅</div>
         <h1>Authorization Successful!</h1>
         <p class="subtitle">Your OpenPhone account has been connected to Claude Desktop.</p>
-        <p>You can now close this tab and start using OpenPhone tools in Claude.</p>
+        <p style="margin: 1.5rem 0; color: #059669; font-weight: 600; font-size: 1.1rem;">
+            🎉 You can now use OpenPhone tools in Claude!
+        </p>
         
-        <button onclick="closeTab()" class="close-btn">Close Tab</button>
+        <p style="color: #64748b; margin-bottom: 2rem;">
+            You can safely close this tab and return to Claude Desktop.
+        </p>
         
-        <div class="countdown">
-            This tab will automatically close in <span id="countdown">5</span> seconds
+        <div style="margin-top: 1rem; font-size: 0.9rem; color: #9ca3af;">
+            <p>💡 Use <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Ctrl+W</kbd> (or <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Cmd+W</kbd> on Mac) to close this tab</p>
         </div>
     </div>
 
@@ -1533,54 +1515,47 @@ function getSuccessPageHTML(responseData: string): string {
     <script type="application/json" id="oauth-response">${responseData}</script>
 
     <script>
-        let timeLeft = 5;
-        const countdownElement = document.getElementById('countdown');
-        
-        function updateCountdown() {
-            countdownElement.textContent = timeLeft;
-            timeLeft--;
-            
-            if (timeLeft < 0) {
-                closeTab();
-            }
-        }
-        
-        function closeTab() {
-            // Try multiple methods to close the tab
-            try {
-                window.close();
-            } catch (e) {
-                // If window.close() doesn't work, try parent window
-                try {
-                    if (window.parent && window.parent !== window) {
-                        window.parent.close();
-                    }
-                } catch (e2) {
-                    // As a last resort, redirect to a blank page
-                    window.location.href = 'about:blank';
-                }
-            }
-        }
-        
-        // Start countdown
-        const interval = setInterval(updateCountdown, 1000);
-        
-        // Also try to close immediately for OAuth flows that support it
+        // Immediately try to post message to opener (for OAuth flows)
         setTimeout(() => {
-            // Some OAuth implementations expect the response data to be available
-            const responseData = document.getElementById('oauth-response').textContent;
-            if (window.opener) {
-                // If opened by another window, try to post message back
-                try {
+            try {
+                const responseData = document.getElementById('oauth-response').textContent;
+                if (window.opener && responseData) {
                     window.opener.postMessage({
                         type: 'oauth_success',
                         data: JSON.parse(responseData)
                     }, '*');
-                } catch (e) {
-                    // Ignore if parsing fails
                 }
+                
+                // For Claude Desktop OAuth: complete the redirect programmatically
+                const redirectUri = '${redirectUri || ''}';
+                if (redirectUri && redirectUri !== 'urn:ietf:wg:oauth:2.0:oob' && responseData) {
+                    const data = JSON.parse(responseData);
+                    const callbackUrl = new URL(redirectUri);
+                    callbackUrl.searchParams.set('code', data.code);
+                    if (data.state) callbackUrl.searchParams.set('state', data.state);
+                    
+                    console.log('Attempting OAuth callback redirect to:', callbackUrl.toString());
+                    
+                    // Try to redirect parent window or opener to callback URL
+                    setTimeout(() => {
+                        try {
+                            if (window.opener) {
+                                window.opener.location.href = callbackUrl.toString();
+                            } else if (window.parent && window.parent !== window) {
+                                window.parent.location.href = callbackUrl.toString();
+                            } else {
+                                // As a fallback, try to redirect this window
+                                window.location.href = callbackUrl.toString();
+                            }
+                        } catch (e) {
+                            console.log('Redirect attempt failed:', e);
+                        }
+                    }, 1000);
+                }
+            } catch (e) {
+                console.log('postMessage failed:', e);
             }
-        }, 500);
+        }, 200);
     </script>
 </body>
 </html>
