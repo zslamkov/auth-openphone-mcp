@@ -67,21 +67,8 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       return this.validateApiKeyFormat(envKey);
     }
     
-    // Check Authorization header (Bearer format)
-    if (props.authorization) {
-      const bearerMatch = props.authorization.match(/^Bearer\s+(.+)$/i);
-      if (bearerMatch) {
-        console.log('Using API key from Authorization header');
-        // Decode token back to API key (for Claude web app integration)
-        try {
-          const decodedKey = atob(bearerMatch[1]);
-          return this.validateApiKeyFormat(decodedKey);
-        } catch {
-          // If decode fails, treat as direct API key
-          return this.validateApiKeyFormat(bearerMatch[1]);
-        }
-      }
-    }
+    // Skip Authorization header - now handled by stateless tokens in auth gate
+    // The API key is extracted from the token and passed via x-openphone-api-key header
     
     // Check custom header
     if (props['x-openphone-api-key']) {
