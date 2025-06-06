@@ -15,6 +15,7 @@ type Props = {
 // Environment bindings for Cloudflare
 type Env = {
   OPENPHONE_API_KEY?: string;
+  OAUTH_SECRET_KEY?: string;
 }
 
 export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {

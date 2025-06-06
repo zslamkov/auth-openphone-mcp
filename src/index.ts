@@ -22,6 +22,11 @@ interface AuthorizationCode {
 	api_key?: string;
 }
 
+// Environment bindings for Cloudflare Workers
+type Env = {
+	OPENPHONE_API_KEY?: string;
+	OAUTH_SECRET_KEY?: string;
+}
 
 // In-memory storage for demo (in production, use Durable Objects or external storage)
 const clients = new Map<string, OAuthClient>();
@@ -38,14 +43,18 @@ async function sha256(plain: string): Promise<string> {
 		.replace(/=/g, '');
 }
 
-// Stateless authorization code implementation using base64 encoding
-const SECRET_KEY = 'openphone-mcp-auth-secret-2024'; // In production, use a proper secret
+// Secure secret key management
+function getSecretKey(env: Env): string {
+	// Use environment variable if available, fallback to default for backward compatibility
+	return env.OAUTH_SECRET_KEY || 'openphone-mcp-auth-secret-2024-fallback';
+}
 
-async function createStatelessCode(authData: AuthorizationCode): Promise<string> {
+async function createStatelessCode(authData: AuthorizationCode, env: Env): Promise<string> {
+	const secretKey = getSecretKey(env);
 	// Create a signed payload
 	const payload = {
 		...authData,
-		signature: await sha256(SECRET_KEY + JSON.stringify(authData))
+		signature: await sha256(secretKey + JSON.stringify(authData))
 	};
 	
 	// Base64 encode the payload
@@ -57,15 +66,16 @@ async function createStatelessCode(authData: AuthorizationCode): Promise<string>
 	return encoded;
 }
 
-async function validateStatelessCode(code: string): Promise<AuthorizationCode | null> {
+async function validateStatelessCode(code: string, env: Env): Promise<AuthorizationCode | null> {
 	try {
+		const secretKey = getSecretKey(env);
 		// Decode the payload
 		const decoded = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
 		const payload = JSON.parse(decoded);
 		
 		// Extract signature and verify
 		const { signature, ...authData } = payload;
-		const expectedSignature = await sha256(SECRET_KEY + JSON.stringify(authData));
+		const expectedSignature = await sha256(secretKey + JSON.stringify(authData));
 		
 		if (signature !== expectedSignature) {
 			return null;
@@ -83,7 +93,8 @@ async function validateStatelessCode(code: string): Promise<AuthorizationCode | 
 }
 
 // Stateless access token implementation
-async function createStatelessAccessToken(api_key: string, scope: string, expires_in = 3600): Promise<string> {
+async function createStatelessAccessToken(api_key: string, scope: string, env: Env, expires_in = 3600): Promise<string> {
+	const secretKey = getSecretKey(env);
 	const tokenData = {
 		api_key,
 		scope,
@@ -93,7 +104,7 @@ async function createStatelessAccessToken(api_key: string, scope: string, expire
 	
 	// Create signature
 	const tokenString = JSON.stringify(tokenData);
-	const signature = await sha256(SECRET_KEY + tokenString);
+	const signature = await sha256(secretKey + tokenString);
 	
 	// Create final payload with signature
 	const payload = {
@@ -110,15 +121,16 @@ async function createStatelessAccessToken(api_key: string, scope: string, expire
 	return encoded;
 }
 
-async function validateStatelessAccessToken(token: string): Promise<{ api_key: string; scope: string } | null> {
+async function validateStatelessAccessToken(token: string, env: Env): Promise<{ api_key: string; scope: string } | null> {
 	try {
+		const secretKey = getSecretKey(env);
 		// Decode the payload
 		const decoded = atob(token.replace(/-/g, '+').replace(/_/g, '/'));
 		const payload = JSON.parse(decoded);
 		
 		// Extract signature and verify
 		const { sig, ...tokenData } = payload;
-		const expectedSignature = await sha256(SECRET_KEY + JSON.stringify(tokenData));
+		const expectedSignature = await sha256(secretKey + JSON.stringify(tokenData));
 		
 		if (sig !== expectedSignature) {
 			return null;
@@ -163,7 +175,7 @@ async function handleOAuthWellKnown(request: Request, url: URL): Promise<Respons
 	});
 }
 
-async function handleOAuthRegister(request: Request, url: URL): Promise<Response> {
+async function handleOAuthRegister(request: Request, url: URL, env: Env): Promise<Response> {
 	if (request.method !== 'POST') {
 		return new Response('Method not allowed', { status: 405 });
 	}
@@ -215,7 +227,7 @@ async function handleOAuthRegister(request: Request, url: URL): Promise<Response
 	}
 }
 
-async function handleOAuthAuthorize(request: Request, url: URL): Promise<Response> {
+async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promise<Response> {
 	const params = url.searchParams;
 	const clientId = params.get('client_id');
 	const redirectUri = params.get('redirect_uri');
@@ -346,7 +358,7 @@ async function handleOAuthAuthorize(request: Request, url: URL): Promise<Respons
 			api_key: apiKey.trim()
 		};
 
-		const code = await createStatelessCode(authCode);
+		const code = await createStatelessCode(authCode, env);
 		authCode.code = code; // Set the actual code value
 
 
@@ -374,7 +386,7 @@ async function handleOAuthAuthorize(request: Request, url: URL): Promise<Respons
 	return new Response('Method not allowed', { status: 405 });
 }
 
-async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
+async function handleOAuthToken(request: Request, url: URL, env: Env): Promise<Response> {
 	if (request.method !== 'POST') {
 		return new Response(JSON.stringify({ error: 'invalid_request' }), {
 			status: 405,
@@ -402,7 +414,7 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 		}
 
 		// Validate stateless authorization code
-		const authCode = await validateStatelessCode(code);
+		const authCode = await validateStatelessCode(code, env);
 		
 		if (!authCode) {
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
@@ -429,7 +441,7 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 		}
 
 		// Generate stateless access token
-		const accessToken = await createStatelessAccessToken(authCode.api_key!, authCode.scope, 3600);
+		const accessToken = await createStatelessAccessToken(authCode.api_key!, authCode.scope, env, 3600);
 
 		const response = {
 			access_token: accessToken,
@@ -454,7 +466,7 @@ async function handleOAuthToken(request: Request, url: URL): Promise<Response> {
 	}
 }
 
-async function authGate(request: Request): Promise<{ response?: Response; api_key?: string }> {
+async function authGate(request: Request, env: Env): Promise<{ response?: Response; api_key?: string }> {
 	// Allow CORS pre-flight
 	if (request.method === 'OPTIONS') return {};
 	
@@ -475,7 +487,7 @@ async function authGate(request: Request): Promise<{ response?: Response; api_ke
 	
 	const token = authHeader.slice(7);
 	
-	const tokenData = await validateStatelessAccessToken(token);
+	const tokenData = await validateStatelessAccessToken(token, env);
 	if (!tokenData) {
 		return {
 			response: new Response('Unauthorized', {
@@ -517,15 +529,15 @@ export default {
 		}
 		
 		if (url.pathname === "/register") {
-			return handleOAuthRegister(request, url);
+			return handleOAuthRegister(request, url, env);
 		}
 		
 		if (url.pathname === "/authorize") {
-			return handleOAuthAuthorize(request, url);
+			return handleOAuthAuthorize(request, url, env);
 		}
 		
 		if (url.pathname === "/token") {
-			return handleOAuthToken(request, url);
+			return handleOAuthToken(request, url, env);
 		}
 
 		// Extract headers for secure API key transmission (for non-protected endpoints)
@@ -536,7 +548,7 @@ export default {
 
 		// Handle MCP SSE endpoint (protected)
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-			const authResult = await authGate(request);
+			const authResult = await authGate(request, env);
 			if (authResult.response) return authResult.response;
 			
 			// Add API key to headers for the agent
@@ -550,7 +562,7 @@ export default {
 
 		// Handle MCP endpoint (protected)
 		if (url.pathname === "/mcp") {
-			const authResult = await authGate(request);
+			const authResult = await authGate(request, env);
 			if (authResult.response) return authResult.response;
 			
 			// Add API key to headers for the agent

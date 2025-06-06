@@ -4,7 +4,7 @@
 // add them as a sort of "plugin" system.
 
 import ENTRY, { __INTERNAL_WRANGLER_MIDDLEWARE__ } from "/Users/openphone/Documents/GitHub/auth-openphone-mcp/.wrangler/tmp/bundle-32uGbg/middleware-insertion-facade.js";
-import { __facade_invoke__, __facade_register__, Dispatcher } from "/Users/openphone/Documents/GitHub/auth-openphone-mcp/node_modules/wrangler/templates/middleware/common.ts";
+import { __facade_invoke__, __facade_register__, type Dispatcher } from "/Users/openphone/Documents/GitHub/auth-openphone-mcp/node_modules/wrangler/templates/middleware/common.ts";
 import type { WorkerEntrypointConstructor } from "/Users/openphone/Documents/GitHub/auth-openphone-mcp/.wrangler/tmp/bundle-32uGbg/middleware-insertion-facade.js";
 
 // Preserve all the exports from the worker
@@ -43,11 +43,11 @@ function wrapExportedHandler(worker: ExportedHandler): ExportedHandler {
 		__facade_register__(middleware);
 	}
 
-	const fetchDispatcher: ExportedHandlerFetchHandler = function (
+	const fetchDispatcher: ExportedHandlerFetchHandler = (
 		request,
 		env,
 		ctx
-	) {
+	) => {
 		if (worker.fetch === undefined) {
 			throw new Error("Handler does not export a fetch() function.");
 		}
@@ -57,7 +57,7 @@ function wrapExportedHandler(worker: ExportedHandler): ExportedHandler {
 	return {
 		...worker,
 		fetch(request, env, ctx) {
-			const dispatcher: Dispatcher = function (type, init) {
+			const dispatcher: Dispatcher = (type, init) => {
 				if (type === "scheduled" && worker.scheduled !== undefined) {
 					const controller = new __Facade_ScheduledController__(
 						Date.now(),
