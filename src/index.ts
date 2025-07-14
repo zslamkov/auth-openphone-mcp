@@ -162,7 +162,9 @@ async function handleOAuthWellKnown(request: Request, url: URL): Promise<Respons
 		code_challenge_methods_supported: ["S256"],
 		token_endpoint_auth_methods_supported: ["none", "client_secret_basic"],
 		response_modes_supported: ["query"],
-		subject_types_supported: ["public"]
+		subject_types_supported: ["public"],
+		// Add cache-busting timestamp
+		_cache_bust: Date.now()
 	};
 
 	return new Response(JSON.stringify(metadata, null, 2), {
@@ -170,7 +172,10 @@ async function handleOAuthWellKnown(request: Request, url: URL): Promise<Respons
 			'Content-Type': 'application/json',
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+			'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version',
+			'Cache-Control': 'no-cache, no-store, must-revalidate',
+			'Pragma': 'no-cache',
+			'Expires': '0'
 		}
 	});
 }
@@ -187,8 +192,8 @@ async function handleOAuthRegister(request: Request, url: URL, env: Env): Promis
 		const clientId = 'openphone-mcp-client';
 		const clientSecret = 'not-needed-for-pkce';
 
-		// Always accept the out-of-band URN for Claude Desktop
-		const redirectUris = ['urn:ietf:wg:oauth:2.0:oob'];
+		// Only accept Claude's callback URL
+		const redirectUris = ['https://claude.ai/api/mcp/auth_callback'];
 
 		const client: OAuthClient = {
 			client_id: clientId,
@@ -216,7 +221,10 @@ async function handleOAuthRegister(request: Request, url: URL, env: Env): Promis
 				'Content-Type': 'application/json',
 				'Access-Control-Allow-Origin': '*',
 				'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-				'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version',
+				'Cache-Control': 'no-cache, no-store, must-revalidate',
+				'Pragma': 'no-cache',
+				'Expires': '0'
 			}
 		});
 	} catch (error) {
@@ -228,6 +236,10 @@ async function handleOAuthRegister(request: Request, url: URL, env: Env): Promis
 }
 
 async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promise<Response> {
+	console.log('🔧 handleOAuthAuthorize called');
+	console.log('🔧 Request URL:', request.url);
+	console.log('🔧 Request method:', request.method);
+	
 	const params = url.searchParams;
 	const clientId = params.get('client_id');
 	const redirectUri = params.get('redirect_uri');
@@ -236,17 +248,11 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 	const state = params.get('state');
 	const codeChallenge = params.get('code_challenge');
 	const codeChallengeMethod = params.get('code_challenge_method');
+	
+	console.log('🔧 Parsed params:', { clientId, redirectUri, responseType, scope, state, codeChallenge, codeChallengeMethod });
 
 	// Validate required parameters
 	if (!clientId || !redirectUri || responseType !== 'code' || !codeChallenge || codeChallengeMethod !== 'S256') {
-		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
-			const response: any = { error: 'invalid_request' };
-			if (state) response.state = state;
-			return new Response(JSON.stringify(response), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' }
-			});
-		}
 		const errorUrl = new URL(redirectUri || `${url.protocol}//${url.host}/error`);
 		errorUrl.searchParams.set('error', 'invalid_request');
 		if (state) errorUrl.searchParams.set('state', state);
@@ -261,23 +267,21 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 		client = {
 			client_id: clientId,
 			client_secret: 'not-needed-for-pkce',
-			redirect_uris: [redirectUri], // Use the redirect URI Claude sent
+			redirect_uris: [redirectUri], // Use the redirect URI from the request
 			scope: scope,
 			created_at: Date.now()
 		};
 		clients.set(clientId, client);
+	} else {
+		// If client exists but doesn't have this redirect URI, add it
+		if (!client.redirect_uris.includes(redirectUri)) {
+			client.redirect_uris.push(redirectUri);
+			clients.set(clientId, client);
+		}
 	}
 	
 	
 	if (!client || !client.redirect_uris.includes(redirectUri)) {
-		if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
-			const response: any = { error: 'invalid_client', error_description: `Client ${clientId} not found or invalid redirect URI` };
-			if (state) response.state = state;
-			return new Response(JSON.stringify(response), {
-				status: 400,
-				headers: { 'Content-Type': 'application/json' }
-			});
-		}
 		const errorUrl = new URL(redirectUri);
 		errorUrl.searchParams.set('error', 'invalid_client');
 		if (state) errorUrl.searchParams.set('state', state);
@@ -305,14 +309,6 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 		console.log('Form submission received:', { approved, apiKeyLength: apiKey?.length, redirectUri });
 
 		if (!approved) {
-			if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob') {
-				const response: any = { error: 'access_denied' };
-				if (state) response.state = state;
-				return new Response(JSON.stringify(response), {
-					status: 400,
-					headers: { 'Content-Type': 'application/json' }
-				});
-			}
 			const errorUrl = new URL(redirectUri);
 			errorUrl.searchParams.set('error', 'access_denied');
 			if (state) errorUrl.searchParams.set('state', state);
@@ -427,7 +423,12 @@ async function handleOAuthAuthorize(request: Request, url: URL, env: Env): Promi
 }
 
 async function handleOAuthToken(request: Request, url: URL, env: Env): Promise<Response> {
+	console.log('🔧 handleOAuthToken called');
+	console.log('🔧 Request method:', request.method);
+	console.log('🔧 Request URL:', request.url);
+	
 	if (request.method !== 'POST') {
+		console.log('❌ Invalid method:', request.method);
 		return new Response(JSON.stringify({ error: 'invalid_request' }), {
 			status: 405,
 			headers: { 'Content-Type': 'application/json' }
@@ -437,6 +438,7 @@ async function handleOAuthToken(request: Request, url: URL, env: Env): Promise<R
 	try {
 		// Parse x-www-form-urlencoded body (OAuth standard)
 		const bodyText = await request.text();
+		console.log('🔧 Request body:', bodyText);
 		const params = new URLSearchParams(bodyText);
 
 		const grantType = params.get('grant_type');
@@ -444,43 +446,90 @@ async function handleOAuthToken(request: Request, url: URL, env: Env): Promise<R
 		const redirectUri = params.get('redirect_uri') as string;
 		const clientId = params.get('client_id') as string;
 		const codeVerifier = params.get('code_verifier') as string;
+		
+		console.log('🔧 Parsed params:', { grantType, code: code ? 'PRESENT' : 'MISSING', redirectUri, clientId, codeVerifier: codeVerifier ? 'PRESENT' : 'MISSING' });
 
 
 		if (grantType !== 'authorization_code') {
+			console.log('❌ Invalid grant type:', grantType);
 			return new Response(JSON.stringify({ error: 'unsupported_grant_type' }), {
 				status: 400,
-				headers: { 'Content-Type': 'application/json' }
+				headers: { 
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
+				}
 			});
 		}
 
 		// Validate stateless authorization code
+		console.log('🔧 Validating authorization code...');
 		const authCode = await validateStatelessCode(code, env);
 		
 		if (!authCode) {
+			console.log('❌ Invalid authorization code');
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
-				headers: { 'Content-Type': 'application/json' }
+				headers: { 
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
+				}
 			});
 		}
+		
+		console.log('✅ Authorization code validated successfully');
 
 		// Validate PKCE
+		console.log('🔧 Validating PKCE...');
 		const expectedChallenge = await sha256(codeVerifier);
+		console.log('🔧 Expected challenge:', expectedChallenge);
+		console.log('🔧 Actual challenge:', authCode.code_challenge);
 		if (expectedChallenge !== authCode.code_challenge) {
+			console.log('❌ PKCE validation failed');
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
-				headers: { 'Content-Type': 'application/json' }
+				headers: { 
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
+				}
 			});
 		}
+		
+		console.log('✅ PKCE validation successful');
 
 		// Validate other parameters
-		if (authCode.client_id !== clientId || authCode.redirect_uri !== redirectUri) {
+		console.log('🔧 Validating other parameters...');
+		console.log('🔧 Expected client_id:', authCode.client_id, 'Actual:', clientId);
+		console.log('🔧 Expected redirect_uri:', authCode.redirect_uri, 'Actual:', redirectUri);
+		
+		// For PKCE flows, client_id can be omitted from token request (OAuth 2.1 spec)
+		const clientIdValid = !clientId || authCode.client_id === clientId;
+		const redirectUriValid = authCode.redirect_uri === redirectUri;
+		
+		if (!clientIdValid || !redirectUriValid) {
+			console.log('❌ Parameter validation failed');
+			console.log('❌ client_id valid:', clientIdValid);
+			console.log('❌ redirect_uri valid:', redirectUriValid);
 			return new Response(JSON.stringify({ error: 'invalid_grant' }), {
 				status: 400,
-				headers: { 'Content-Type': 'application/json' }
+				headers: { 
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
+				}
 			});
 		}
+		
+		console.log('✅ Parameter validation successful');
 
 		// Generate stateless access token
+		console.log('🔧 Generating access token...');
 		const accessToken = await createStatelessAccessToken(authCode.api_key!, authCode.scope, env, 3600);
 
 		const response = {
@@ -490,12 +539,13 @@ async function handleOAuthToken(request: Request, url: URL, env: Env): Promise<R
 			scope: authCode.scope
 		};
 
+		console.log('✅ Token exchange successful');
 		return new Response(JSON.stringify(response), {
 			headers: {
 				'Content-Type': 'application/json',
 				'Access-Control-Allow-Origin': '*',
 				'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-				'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
 			}
 		});
 	} catch (error) {
@@ -519,7 +569,7 @@ async function authGate(request: Request, env: Env): Promise<{ response?: Respon
 					'WWW-Authenticate': 'Bearer realm="OpenPhone"',
 					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
 				}
 			})
 		};
@@ -536,7 +586,7 @@ async function authGate(request: Request, env: Env): Promise<{ response?: Respon
 					'WWW-Authenticate': 'Bearer error="invalid_token"',
 					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version'
 				}
 			})
 		};
@@ -557,7 +607,7 @@ export default {
 				headers: {
 					'Access-Control-Allow-Origin': '*',
 					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version',
 					'Access-Control-Max-Age': '86400',
 				}
 			});
@@ -565,18 +615,47 @@ export default {
 
 		// Handle OAuth 2.1 + PKCE endpoints for Claude Desktop
 		if (url.pathname === "/.well-known/oauth-authorization-server") {
+			console.log('🔧 OAuth well-known endpoint accessed');
+			console.log('🔧 Well-known request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
 			return handleOAuthWellKnown(request, url);
 		}
 		
+		// Handle OAuth protected resource endpoints (required by MCP protocol)
+		if (url.pathname === "/.well-known/oauth-protected-resource") {
+			console.log('🔧 OAuth protected resource endpoint accessed');
+			return new Response(JSON.stringify({
+				resource: "openphone-mcp",
+				scopes: ["openphone:read", "openphone:write", "openphone:admin"]
+			}), {
+				headers: {
+					'Content-Type': 'application/json',
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+					'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-protocol-version',
+					'Cache-Control': 'no-cache, no-store, must-revalidate',
+					'Pragma': 'no-cache',
+					'Expires': '0'
+				}
+			});
+		}
+		
 		if (url.pathname === "/register") {
+			console.log('🔧 OAuth register endpoint accessed');
+			console.log('🔧 Register request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
 			return handleOAuthRegister(request, url, env);
 		}
 		
 		if (url.pathname === "/authorize") {
+			console.log('🔧 OAuth authorize endpoint accessed');
+			console.log('🔧 Authorize URL params:', url.searchParams.toString());
+			console.log('🔧 Request method:', request.method);
+			console.log('🔧 Request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
 			return handleOAuthAuthorize(request, url, env);
 		}
 		
 		if (url.pathname === "/token") {
+			console.log('🔧 OAuth token endpoint accessed');
+			console.log('🔧 Token request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
 			return handleOAuthToken(request, url, env);
 		}
 
@@ -588,16 +667,59 @@ export default {
 
 		// Handle MCP SSE endpoint (protected)
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
-			const authResult = await authGate(request, env);
-			if (authResult.response) return authResult.response;
+			console.log('🔗 SSE endpoint accessed');
+			console.log('🔗 Request method:', request.method);
+			console.log('🔗 Request URL:', request.url);
+			console.log('🔗 Request headers (ALL):', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
+			
+			// Log specific headers we're looking for
+			console.log('🔗 Authorization header:', request.headers.get('authorization'));
+			console.log('🔗 Content-Type header:', request.headers.get('content-type'));
+			console.log('🔗 User-Agent header:', request.headers.get('user-agent'));
+			console.log('🔗 Origin header:', request.headers.get('origin'));
+			console.log('🔗 Referer header:', request.headers.get('referer'));
+			
+			// Check if there's a request body
+			const bodyText = request.method === 'POST' ? await request.text() : '';
+			console.log('🔗 Request body:', bodyText);
+			
+			// Create a new request with the body if it was consumed
+			const newRequest = request.method === 'POST' ? 
+				new Request(request.url, {
+					method: request.method,
+					headers: request.headers,
+					body: bodyText
+				}) : request;
+			
+			const authResult = await authGate(newRequest, env);
+			if (authResult.response) {
+				console.log('❌ SSE auth failed, returning response');
+				return authResult.response;
+			}
+			
+			console.log('✅ SSE auth successful, API key:', authResult.api_key ? 'PRESENT' : 'MISSING');
 			
 			// Add API key to headers for the agent
 			if (authResult.api_key) {
 				headers['x-openphone-api-key'] = authResult.api_key;
 				ctx.props = { ...headers, ...searchParams };
+				console.log('🔧 Set x-openphone-api-key header and updated ctx.props');
 			}
 			
-			return OpenPhoneMCPAgent.serveSSE("/sse").fetch(request, env, ctx);
+			console.log('🚀 Calling OpenPhoneMCPAgent.serveSSE("/sse")');
+			const response = await OpenPhoneMCPAgent.serveSSE("/sse").fetch(newRequest, env, ctx);
+			
+			// Add CORS headers to the response
+			const newHeaders = new Headers(response.headers);
+			newHeaders.set('Access-Control-Allow-Origin', '*');
+			newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+			newHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-protocol-version');
+			
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: newHeaders
+			});
 		}
 
 		// Handle MCP endpoint (protected)
@@ -611,7 +733,19 @@ export default {
 				ctx.props = { ...headers, ...searchParams };
 			}
 			
-			return OpenPhoneMCPAgent.serve("/mcp").fetch(request, env, ctx);
+			const response = await OpenPhoneMCPAgent.serve("/mcp").fetch(request, env, ctx);
+			
+			// Add CORS headers to the response
+			const newHeaders = new Headers(response.headers);
+			newHeaders.set('Access-Control-Allow-Origin', '*');
+			newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+			newHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-protocol-version');
+			
+			return new Response(response.body, {
+				status: response.status,
+				statusText: response.statusText,
+				headers: newHeaders
+			});
 		}
 
 		// Default homepage with instructions
@@ -1502,9 +1636,18 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
             🎉 You can now use OpenPhone tools in Claude!
         </p>
         
-        <p style="color: #64748b; margin-bottom: 2rem;">
+        <p style="color: #64748b; margin-bottom: 1rem;">
             You can safely close this tab and return to Claude Desktop.
         </p>
+        
+        <div id="countdown-container" style="margin: 1rem 0; padding: 1rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; display: none;">
+            <p style="color: #1e40af; font-weight: 600; margin-bottom: 0.5rem;">
+                ⏱️ Auto-redirecting in <span id="countdown">3</span> seconds...
+            </p>
+            <button onclick="cancelRedirect()" style="background: #ef4444; color: white; border: none; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">
+                Cancel Auto-Redirect
+            </button>
+        </div>
         
         <div style="margin-top: 1rem; font-size: 0.9rem; color: #9ca3af;">
             <p>💡 Use <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Ctrl+W</kbd> (or <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Cmd+W</kbd> on Mac) to close this tab</p>
@@ -1515,7 +1658,48 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
     <script type="application/json" id="oauth-response">${responseData}</script>
 
     <script>
-        // Immediately try to post message to opener (for OAuth flows)
+        let hasUserInteracted = false;
+        let autoRedirectTimer = null;
+        let countdownTimer = null;
+        let secondsLeft = 3;
+        
+        function cancelRedirect() {
+            hasUserInteracted = true;
+            if (autoRedirectTimer) {
+                clearTimeout(autoRedirectTimer);
+                autoRedirectTimer = null;
+            }
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            document.getElementById('countdown-container').style.display = 'none';
+        }
+        
+        function startCountdown() {
+            const countdownContainer = document.getElementById('countdown-container');
+            const countdownSpan = document.getElementById('countdown');
+            
+            countdownContainer.style.display = 'block';
+            
+            countdownTimer = setInterval(() => {
+                secondsLeft--;
+                countdownSpan.textContent = secondsLeft;
+                
+                if (secondsLeft <= 0) {
+                    clearInterval(countdownTimer);
+                }
+            }, 1000);
+        }
+        
+        // Add click listener to detect user interaction
+        document.addEventListener('click', () => {
+            if (!hasUserInteracted) {
+                cancelRedirect();
+            }
+        });
+        
+        // Post message to opener immediately for OAuth flows
         setTimeout(() => {
             try {
                 const responseData = document.getElementById('oauth-response').textContent;
@@ -1526,7 +1710,7 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
                     }, '*');
                 }
                 
-                // For Claude Desktop OAuth: complete the redirect programmatically
+                // For Claude Desktop OAuth: handle redirect more gracefully
                 const redirectUri = '${redirectUri || ''}';
                 if (redirectUri && redirectUri !== 'urn:ietf:wg:oauth:2.0:oob' && responseData) {
                     const data = JSON.parse(responseData);
@@ -1534,28 +1718,36 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
                     callbackUrl.searchParams.set('code', data.code);
                     if (data.state) callbackUrl.searchParams.set('state', data.state);
                     
-                    console.log('Attempting OAuth callback redirect to:', callbackUrl.toString());
+                    console.log('OAuth callback URL prepared:', callbackUrl.toString());
                     
-                    // Try to redirect parent window or opener to callback URL
-                    setTimeout(() => {
-                        try {
-                            if (window.opener) {
-                                window.opener.location.href = callbackUrl.toString();
-                            } else if (window.parent && window.parent !== window) {
-                                window.parent.location.href = callbackUrl.toString();
-                            } else {
-                                // As a fallback, try to redirect this window
-                                window.location.href = callbackUrl.toString();
+                    // Auto-redirect for OAuth callbacks (including MCP inspector)
+                    if (redirectUri && redirectUri !== 'urn:ietf:wg:oauth:2.0:oob') {
+                        // Show countdown
+                        startCountdown();
+                        
+                        autoRedirectTimer = setTimeout(() => {
+                            if (!hasUserInteracted) {
+                                try {
+                                    console.log('Auto-redirecting to OAuth callback...');
+                                    if (window.opener) {
+                                        window.opener.location.href = callbackUrl.toString();
+                                        window.close();
+                                    } else if (window.parent && window.parent !== window) {
+                                        window.parent.location.href = callbackUrl.toString();
+                                    } else {
+                                        window.location.href = callbackUrl.toString();
+                                    }
+                                } catch (e) {
+                                    console.log('Auto-redirect failed:', e);
+                                }
                             }
-                        } catch (e) {
-                            console.log('Redirect attempt failed:', e);
-                        }
-                    }, 1000);
+                        }, 3000);
+                    }
                 }
             } catch (e) {
-                console.log('postMessage failed:', e);
+                console.log('OAuth flow handling failed:', e);
             }
-        }, 200);
+        }, 500);
     </script>
 </body>
 </html>
