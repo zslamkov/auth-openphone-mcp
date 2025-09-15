@@ -19,6 +19,16 @@ interface ListCallsParams {
   createdBefore?: string;
 }
 
+interface ListMessagesParams {
+  phoneNumberId: string;
+  participants: string[];
+  userId?: string;
+  maxResults?: number;
+  pageToken?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+}
+
 interface ApiError {
   status: number;
   message: string;
@@ -200,5 +210,19 @@ export class OpenPhoneClient {
     }
     
     return this.request(`/call-transcripts/${callId}`);
+  }
+
+  async listMessages(params: ListMessagesParams): Promise<unknown> {
+    if (!params.phoneNumberId?.trim() || !params.participants?.length) {
+      throw new Error('phoneNumberId and participants are required');
+    }
+    
+    const queryParams = {
+      ...params,
+      maxResults: params.maxResults ?? this.defaultMaxResults
+    };
+    
+    const queryString = this.buildQueryString(queryParams);
+    return this.request(`/messages?${queryString}`);
   }
 } 

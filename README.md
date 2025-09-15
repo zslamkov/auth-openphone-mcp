@@ -75,6 +75,7 @@ That's it! You should now see OpenPhone tools available in Claude Desktop. You c
 | **bulk-messages** | Send the same message to multiple recipients | All plans |
 | **create-contact** | Create contacts with email, phone, and company info | All plans |
 | **fetch-call-transcripts** | Fetch and analyze call transcripts | Business plan |
+| **fetch-messages** | Fetch and analyze message history with participants | All plans |
 
 ## 💬 Usage Examples
 
