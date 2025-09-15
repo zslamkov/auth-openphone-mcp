@@ -16,6 +16,7 @@ type Props = {
 type Env = {
   OPENPHONE_API_KEY?: string;
   OAUTH_SECRET_KEY?: string;
+  OPENAI_API_KEY?: string;
 }
 
 export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
@@ -24,32 +25,49 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     version: "1.0.0",
   });
 
+  constructor(...args: any[]) {
+    // Ensure base class initialization
+    // @ts-ignore - pass through any constructor args required by the base class
+    super(...args);
+  }
+
   async init() {
     // Debug: Log all available props and env
     console.log('MCP Agent Init - Props:', JSON.stringify(this.props, null, 2));
     console.log('MCP Agent Init - Env keys:', Object.keys(this.env || {}));
-    
+
+    // Detect ChatGPT client
+    const uaInit = (this.props as any)['user-agent']?.toLowerCase?.() || '';
+    const isOpenAIMcpClientInit = uaInit.includes('openai-mcp');
+    // Gate tool registration by client
+    if (isOpenAIMcpClientInit) {
+      console.log('🔧 ChatGPT client detected: registering limited legacy tools (send-message, fetch-call-transcripts)');
+      this.addChatGPTLimitedTools();
+    } else {
+      console.log('🔧 Non-ChatGPT client detected: registering full OpenPhone tools');
+      this.addOpenPhoneTools();
+    }
+
     // Check for API key from multiple sources
     const apiKey = await this.getApiKey();
-    
+
     if (!apiKey) {
-      console.log('No API key found - server will have no tools available');
+      console.log('No API key found - tools will perform runtime API key checks');
       return;
     }
 
     console.log('API key found, validating...');
-    
+
     // Validate the API key
     const isValid = await this.validateApiKey(apiKey);
     if (!isValid) {
-      console.log('API key validation failed - server will have no tools available');
+      console.log('API key validation failed - handlers will continue to enforce at runtime');
       return;
     }
 
-    console.log('API key valid, adding tools...');
-    
-    // Add all OpenPhone tools
-    this.addOpenPhoneTools(apiKey);
+    console.log('API key valid');
+
+    // Tools already registered; nothing else to add here
   }
 
   private async getApiKey(): Promise<string | null> {
@@ -129,8 +147,225 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     }
   }
 
-  private addOpenPhoneTools(apiKey: string) {
-    const openPhoneClient = new OpenPhoneClient(apiKey);
+  // --- AI middleware planner (OpenAI) ---
+  private async planSearchWithOpenAI(query: string): Promise<{
+    actions: Array<{
+      type: 'messages' | 'calls';
+      inboxPhoneNumber?: string;          // E.164 preferred
+      participantPhoneNumber?: string;    // E.164 preferred
+      maxResults?: number;
+      createdAfter?: string;              // ISO 8601
+      createdBefore?: string;             // ISO 8601
+      keywords?: string;                  // optional text filter
+    }>;
+  } | null> {
+    try {
+      const openaiKey = (this.env as Env).OPENAI_API_KEY;
+      if (!openaiKey) return null;
+
+      const system = `You are a planner that maps a natural-language request to OpenPhone REST queries.
+Respond ONLY with a JSON object that matches this TypeScript type:
+{
+  actions: Array<{
+    type: 'messages' | 'calls',
+    inboxPhoneNumber?: string,
+    participantPhoneNumber?: string,
+    maxResults?: number,
+    createdAfter?: string,
+    createdBefore?: string,
+    keywords?: string
+  }>
+}
+Rules:
+- Prefer E.164 phone numbers if present. If user provides (xxx) xxx-xxxx, normalize but keep digits.
+- If the user mentions "messages sent to <number>", use type: 'messages' with participantPhoneNumber = that number.
+- If the user mentions calls or transcripts, use type: 'calls'.
+- If a specific inbox/workspace number is given, set inboxPhoneNumber.
+- Parse simple time windows: today, yesterday, last N days/weeks, or explicit YYYY-MM-DD ranges to createdAfter/createdBefore.
+- maxResults default 10.
+- Include keywords when relevant.`;
+
+      const body = {
+        model: 'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: query }
+        ]
+      };
+
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openaiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json() as any;
+      const content = data?.choices?.[0]?.message?.content;
+      if (!content) return null;
+      const parsed = JSON.parse(content);
+      if (!parsed?.actions) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private addChatGPTTools() {
+    console.log('🔧 Adding search tool...');
+    // ChatGPT MCP Search Tool
+    this.server.tool(
+      "search",
+      {
+        query: z.string().describe("Pass the FULL user request verbatim (include phone numbers and dates). Returns result objects with id, title, url, and text snippet.")
+      },
+      async ({ query }: { query: string }) => {
+        console.log('🔍 SEARCH TOOL CALLED with query:', query);
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: JSON.stringify({ results: [], error: 'API key required or invalid' }) }] };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+
+          // AI planning
+          const aiPlan = await this.planSearchWithOpenAI(query);
+          if (aiPlan?.actions?.length) {
+            console.log('🧠 Using OpenAI planning for search:', JSON.stringify(aiPlan));
+            const results: any[] = [];
+            const snippet = (s: string, n = 800) => (s || '').length > n ? (s || '').slice(0, n) + '…' : (s || '');
+            const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, '');
+            const ensureE164 = (s?: string) => { if (!s) return undefined; const d = digitsOnly(s); if (!d) return undefined; return d.startsWith('1') && d.length === 11 ? `+${d}` : (d.length === 10 ? `+1${d}` : `+${d}`); };
+            const ensureIso = (s?: string) => { if (!s) return undefined; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s}T00:00:00.000Z`; if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s; return undefined; };
+            const sixMonthsCutoff = () => { const now = new Date(); const d = new Date(now.getTime() - 180*24*60*60*1000); return d.toISOString(); };
+            const wantsSixMonths = /past\s*6\s*months|last\s*6\s*months/i.test(query);
+            for (const action of aiPlan.actions.slice(0, 3)) {
+              try {
+                const createdAfterFinal = wantsSixMonths ? sixMonthsCutoff() : (ensureIso(action.createdAfter) || undefined);
+                const createdBeforeFinal = ensureIso(action.createdBefore);
+                if (action.type === 'messages') {
+                  const pnRes = await openPhoneClient.listPhoneNumbers() as any;
+                  const list = pnRes.data || [];
+                  const inboxE164 = ensureE164(action.inboxPhoneNumber);
+                  const participantE164 = ensureE164(action.participantPhoneNumber);
+                  const phone = list.find((pn: any) => pn.number === inboxE164 || pn.id === inboxE164) || list[0];
+                  if (!phone) continue;
+                  const collect = async (p: string) => {
+                    const msgRes = await openPhoneClient.listMessages({ phoneNumberId: phone.id, participants: [p], maxResults: 50, ...(createdAfterFinal ? { createdAfter: createdAfterFinal } : {}), ...(createdBeforeFinal ? { createdBefore: createdBeforeFinal } : {}) }) as any;
+                    (msgRes.data || []).forEach((m: any) => {
+                      results.push({ id: `message-${m.id}`, title: `Message from ${m.from} to ${(m.to||[]).join(', ')} (${m.createdAt?.split('T')[0]})`, url: `https://app.openphone.com/messages/${m.id}`, text: snippet(m.text || '') });
+                    });
+                  };
+                  if (participantE164) {
+                    await collect(participantE164);
+                  } else {
+                    const convRes = await openPhoneClient.listConversations({ phoneNumber: phone.id, maxResults: 20 }) as any;
+                    const participants = new Set<string>();
+                    (convRes.data || []).forEach((c: any) => (c.participants||[]).forEach((p: string) => { if (p && p !== phone.number) participants.add(p); }));
+                    for (const p of Array.from(participants).slice(0, 10)) { try { await collect(p); } catch {} }
+                  }
+                } else if (action.type === 'calls') {
+                  const pnRes = await openPhoneClient.listPhoneNumbers() as any; const list = pnRes.data || [];
+                  const inboxE164 = ensureE164(action.inboxPhoneNumber); const participantE164 = ensureE164(action.participantPhoneNumber);
+                  const phone = list.find((pn: any) => pn.number === inboxE164 || pn.id === inboxE164) || list[0]; if (!phone) continue;
+                  const pushCalls = async (p?: string) => {
+                    const callsRes = await openPhoneClient.listCalls({ phoneNumberId: phone.id, participants: p ? [p] : [], maxResults: 50, ...(createdAfterFinal ? { createdAfter: createdAfterFinal } : {}), ...(createdBeforeFinal ? { createdBefore: createdBeforeFinal } : {}) }) as any;
+                    for (const c of (callsRes.data || []).slice(0, 10)) {
+                      let text = ''; try { const t = await openPhoneClient.getCallTranscript(c.id) as any; text = Array.isArray(t?.data?.dialogue) ? t.data.dialogue.map((seg: any) => seg.content).join(' ') : ''; } catch {}
+                      results.push({ id: `call-${c.id}`, title: `Call with ${p || participantE164 || 'participant'} (${c.startedAt?.split('T')[0]}) - ${c.direction}`, url: `https://app.openphone.com/calls/${c.id}`, text: snippet(text) });
+                    }
+                  };
+                  if (participantE164) { await pushCalls(participantE164); } else {
+                    const convRes = await openPhoneClient.listConversations({ phoneNumber: phone.id, maxResults: 20 }) as any;
+                    const participants = new Set<string>();
+                    (convRes.data || []).forEach((c: any) => (c.participants||[]).forEach((p: string) => { if (p && p !== phone.number) participants.add(p); }));
+                    for (const p of Array.from(participants).slice(0, 10)) { try { await pushCalls(p); } catch {} }
+                  }
+                }
+              } catch (e) { console.warn('AI action failed, continuing:', e); }
+            }
+            return { content: [{ type: 'text', text: JSON.stringify({ results: results.slice(0, 20) }) }] };
+          }
+
+          // Fallback keyword/phone search
+          const results: any[] = []; const snippet = (s: string, n = 800) => (s || '').length > n ? (s || '').slice(0, n) + '…' : (s || '');
+          const searchQuery = query.trim().toLowerCase();
+          const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, ''); const last10 = (s: string) => { const d = digitsOnly(s); return d.length > 10 ? d.slice(-10) : d; };
+          const queryDigits = digitsOnly(query); const queryLast10 = last10(query); const isPhoneLike = queryDigits.length >= 7;
+          const pnRes = await openPhoneClient.listPhoneNumbers() as any; const phoneNumbers = pnRes.data || [];
+          for (const phone of phoneNumbers.slice(0, 3)) {
+            try {
+              const convRes = await openPhoneClient.listConversations({ phoneNumber: phone.id, maxResults: 20 }) as any;
+              const participants = new Set<string>();
+              (convRes.data || []).forEach((c: any) => (c.participants||[]).forEach((p: string) => { if (p && p !== phone.number) participants.add(p); }));
+              for (const p of Array.from(participants).slice(0, 10)) {
+                try {
+                  const msgRes = await openPhoneClient.listMessages({ phoneNumberId: phone.id, participants: [p], maxResults: 20 }) as any;
+                  (msgRes.data || []).forEach((m: any) => {
+                    const textMatch = (m.text||'').toLowerCase().includes(searchQuery);
+                    const phoneMatch = isPhoneLike && (last10(m.from)===queryLast10 || (Array.isArray(m.to)&&m.to.some((t:string)=>last10(t)===queryLast10)) || last10(p)===queryLast10);
+                    if (textMatch || phoneMatch) results.push({ id:`message-${m.id}`, title:`Message from ${m.from} to ${(m.to||[]).join(', ')} (${m.createdAt?.split('T')[0]})`, url:`https://app.openphone.com/messages/${m.id}`, text: snippet(m.text||'') });
+                  });
+                } catch {}
+              }
+            } catch {}
+          }
+          return { content: [{ type: 'text', text: JSON.stringify({ results: results.slice(0,20) }) }] };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text', text: JSON.stringify({ results: [], error: msg }) }] };
+        }
+      }
+    );
+    console.log('✅ Search tool added');
+
+    console.log('🔧 Adding fetch tool...');
+    // ChatGPT MCP Fetch Tool
+    this.server.tool(
+      "fetch",
+      { id: z.string().describe("ID like 'message-<id>' or 'call-<id>' to fetch details") },
+      async ({ id }: { id: string }) => {
+        console.log('📄 FETCH TOOL CALLED with id:', id);
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            throw new Error('API key required or invalid');
+          }
+          if (!id?.trim()) throw new Error('Document ID is required');
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const [type, itemId] = id.split('-');
+          if (type === 'message' && itemId) {
+            const pnRes = await openPhoneClient.listPhoneNumbers() as any; const phoneNumbers = pnRes.data || [];
+            for (const phone of phoneNumbers) {
+              try {
+                const convRes = await openPhoneClient.listConversations({ phoneNumber: phone.id, maxResults: 50 }) as any;
+                const participants = new Set<string>(); (convRes.data||[]).forEach((c:any)=>(c.participants||[]).forEach((p:string)=>{ if(p&&p!==phone.number)participants.add(p);}));
+                for (const p of participants) {
+                  try {
+                    const msgRes = await openPhoneClient.listMessages({ phoneNumberId: phone.id, participants:[p], maxResults: 100 }) as any;
+                    const m = (msgRes.data||[]).find((x:any)=>x.id===itemId); if (m) {
+                      return { content: [{ type:'text', text: JSON.stringify({ id, title:`Message from ${m.from} to ${(m.to||[]).join(', ')} (${m.createdAt?.split('T')[0]})`, text: m.text||'', url:`https://app.openphone.com/messages/${m.id}` }) }] };
+                    }
+                  } catch {}
+                }
+              } catch {}
+            }
+            throw new Error(`Message ${itemId} not found`);
+          } else if (type==='call' && itemId) {
+            const t = await openPhoneClient.getCallTranscript(itemId) as any; const text = Array.isArray(t?.data?.dialogue)?t.data.dialogue.map((seg:any)=>seg.content).join('\n'):'No transcript dialogue available';
+            return { content:[{ type:'text', text: JSON.stringify({ id, title:`Call Transcript ${itemId}`, text, url:`https://app.openphone.com/calls/${itemId}` }) }] };
+          } else { throw new Error('Unsupported id type'); }
+        } catch (error) { const msg = error instanceof Error ? error.message : String(error); throw new Error(`Failed to fetch item: ${msg}`); }
+      }
+    );
+    console.log('✅ Fetch tool added');
+  }
+
+  private addOpenPhoneTools() {
 
     // Send Message Tool
     this.server.tool(
@@ -142,6 +377,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       },
       async ({ from, to, content }: { from: string; to: string; content: string }) => {
         try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
           const result = await openPhoneClient.sendMessage(from, [to], content) as any;
           return {
             content: [{
@@ -171,6 +411,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         content: z.string().describe("The message content")
       },
       async ({ from, to, content }: { from: string; to: string[]; content: string }) => {
+        const apiKey = await this.getApiKey();
+        if (!apiKey || !(await this.validateApiKey(apiKey))) {
+          return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+        }
+        const openPhoneClient = new OpenPhoneClient(apiKey);
         const results: { to: string; success: boolean; error?: string }[] = [];
         
         for (const number of to) {
@@ -223,6 +468,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         })).describe("Array of contacts to create. Each must include company, emails, firstName, lastName, phoneNumbers, and role.")
       },
       async ({ contacts }: { contacts: any[] }) => {
+        const apiKey = await this.getApiKey();
+        if (!apiKey || !(await this.validateApiKey(apiKey))) {
+          return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+        }
+        const openPhoneClient = new OpenPhoneClient(apiKey);
         const results: { contact: any; success: boolean; error?: string }[] = [];
         
         for (const contact of contacts) {
@@ -273,6 +523,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         createdBefore?: string;
       }) => {
         try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
           // Step 1: List phone numbers to find phoneNumberId
           const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers() as any;
           
@@ -445,6 +700,254 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         }
       }
     );
+
+    // Fetch Messages Tool
+    this.registerFetchMessagesTool();
+ 
+ 
+  }
+ 
+  // Shared registration for fetch-messages (reused by ChatGPT-limited and full toolsets)
+  private registerFetchMessagesTool() {
+    this.server.tool(
+      "fetch-messages",
+      {
+        inboxPhoneNumber: z.string().describe("Your OpenPhone inbox number (E.164 format like +15555555555) to fetch messages for"),
+        participantPhoneNumber: z.string().optional().describe("Optional: specific participant phone number to filter conversations (E.164 format)"),
+        maxResults: z.number().optional().default(10).describe("Maximum number of messages to fetch (default: 10, max: 100)"),
+        createdAfter: z.string().optional().describe("Optional: filter messages created after this date (ISO 8601 format like 2024-01-01T00:00:00Z)"),
+        createdBefore: z.string().optional().describe("Optional: filter messages created before this date (ISO 8601 format)"),
+        userId: z.string().optional().describe("Optional: filter messages by specific user ID (US123abc format)")
+      },
+      async ({ inboxPhoneNumber, participantPhoneNumber, maxResults = 10, createdAfter, createdBefore, userId }: { 
+        inboxPhoneNumber: string; 
+        participantPhoneNumber?: string;
+        maxResults?: number;
+        createdAfter?: string;
+        createdBefore?: string;
+        userId?: string;
+      }) => {
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers() as any;
+          const phoneNumberData = phoneNumbersResponse.data?.find((pn: any) => 
+            pn.number === inboxPhoneNumber || 
+            pn.id === inboxPhoneNumber
+          );
+          if (!phoneNumberData) {
+            return {
+              content: [{ type: 'text', text: `Error: Could not find phone number ${inboxPhoneNumber} in your OpenPhone workspace. Available numbers: ${phoneNumbersResponse.data?.map((pn: any) => pn.number).join(', ') || 'none'}` }],
+              isError: true
+            };
+          }
+          const phoneNumberId = phoneNumberData.id;
+          
+          let participantsToSearch: string[] = [];
+          if (participantPhoneNumber) {
+            participantsToSearch = [participantPhoneNumber];
+          } else {
+            const conversationsResponse = await openPhoneClient.listConversations({ phoneNumber: phoneNumberId, maxResults: 50 }) as any;
+            const participants = new Set<string>();
+            conversationsResponse.data?.forEach((conv: any) => {
+              conv.participants?.forEach((participantPhoneNumber: string) => {
+                if (participantPhoneNumber) {
+                  const participantNum = participantPhoneNumber;
+                  const inboxNum = inboxPhoneNumber;
+                  const normalizedParticipant = participantNum.replace(/[^\d]/g, '');
+                  const normalizedInbox = inboxNum.replace(/[^\d]/g, '');
+                  if (normalizedParticipant !== normalizedInbox && participantNum !== phoneNumberData.number) {
+                    participants.add(participantNum);
+                  }
+                }
+              });
+            });
+            participantsToSearch = Array.from(participants);
+          }
+          if (participantsToSearch.length === 0) {
+            return { content: [{ type: 'text', text: `No conversations found for ${inboxPhoneNumber}. Make sure the number has message history.` }], isError: true };
+          }
+          const allMessages: any[] = [];
+          let totalParticipantsChecked = 0;
+          for (const participant of participantsToSearch) {
+            if (allMessages.length >= maxResults) break;
+            totalParticipantsChecked++;
+            try {
+              const messagesResponse = await openPhoneClient.listMessages({
+                phoneNumberId,
+                participants: [participant],
+                userId,
+                maxResults: Math.min(maxResults - allMessages.length, 100),
+                createdAfter,
+                createdBefore
+              }) as any;
+              if (messagesResponse.data && messagesResponse.data.length > 0) {
+                messagesResponse.data.forEach((message: any) => {
+                  if (allMessages.length < maxResults) {
+                    allMessages.push({
+                      messageId: message.id,
+                      participant: participant,
+                      direction: message.direction,
+                      from: message.from,
+                      to: message.to,
+                      text: message.text,
+                      status: message.status,
+                      userId: message.userId,
+                      createdAt: message.createdAt,
+                      updatedAt: message.updatedAt
+                    });
+                  }
+                });
+              }
+            } catch (messagesError) {
+              console.warn(`Error fetching messages for participant ${participant}:`, messagesError);
+            }
+          }
+          if (allMessages.length === 0) {
+            return { content: [{ type: 'text', text: `No messages found for ${inboxPhoneNumber}. Checked ${totalParticipantsChecked} participants.` }] };
+          }
+          allMessages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          const summary = `Found ${allMessages.length} messages for ${inboxPhoneNumber} (checked ${totalParticipantsChecked} participants):\n\n`;
+          let formattedMessages = "";
+          allMessages.forEach((message, index) => {
+            formattedMessages += `## Message ${index + 1}\n`;
+            formattedMessages += `**Message ID:** ${message.messageId}\n`;
+            formattedMessages += `**Participant:** ${message.participant}\n`;
+            formattedMessages += `**Direction:** ${message.direction}\n`;
+            formattedMessages += `**From:** ${message.from}\n`;
+            formattedMessages += `**To:** ${message.to.join(', ')}\n`;
+            formattedMessages += `**Status:** ${message.status}\n`;
+            formattedMessages += `**Created:** ${message.createdAt}\n`;
+            if (message.userId) {
+              formattedMessages += `**User ID:** ${message.userId}\n`;
+            }
+            formattedMessages += `**Message:** ${message.text}\n`;
+            formattedMessages += `\n---\n\n`;
+          });
+          return { content: [{ type: 'text', text: summary + formattedMessages }] };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text', text: `Error fetching messages: ${errorMessage}` }], isError: true };
+        }
+      }
+    );
+  }
+
+  private addChatGPTLimitedTools() {
+    // Send Message Tool (runtime API key check)
+    this.server.tool(
+      "send-message",
+      {
+        from: z.string().describe("Your OpenPhone number (E.164 or ID) to send from"),
+        to: z.string().describe("The recipient's phone number (E.164 format)"),
+        content: z.string().describe("The message content")
+      },
+      async ({ from, to, content }: { from: string; to: string; content: string }) => {
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const result = await openPhoneClient.sendMessage(from, [to], content) as any;
+          return {
+            content: [{ type: 'text', text: `Message sent successfully to ${to}. Message ID: ${result.data?.id || result.id}` }]
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text', text: `Error sending message: ${errorMessage}` }], isError: true };
+        }
+      }
+    );
+
+    // Fetch Call Transcripts Tool (runtime API key check)
+    this.server.tool(
+      "fetch-call-transcripts",
+      {
+        inboxPhoneNumber: z.string().describe("Your OpenPhone inbox number (E.164 format like +15555555555) to find transcripts for"),
+        participantPhoneNumber: z.string().optional().describe("Optional: specific participant phone number to filter conversations (E.164 format)"),
+        maxResults: z.number().optional().default(10).describe("Maximum number of calls to fetch transcripts for (default: 10)"),
+        createdAfter: z.string().optional().describe("Optional: filter calls created after this date (ISO 8601 format like 2024-01-01T00:00:00Z)"),
+        createdBefore: z.string().optional().describe("Optional: filter calls created before this date (ISO 8601 format)")
+      },
+      async ({ inboxPhoneNumber, participantPhoneNumber, maxResults = 10, createdAfter, createdBefore }: { 
+        inboxPhoneNumber: string; 
+        participantPhoneNumber?: string;
+        maxResults?: number;
+        createdAfter?: string;
+        createdBefore?: string;
+      }) => {
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const phoneNumbersResponse = await openPhoneClient.listPhoneNumbers() as any;
+          const phoneNumberData = phoneNumbersResponse.data?.find((pn: any) => pn.number === inboxPhoneNumber || pn.id === inboxPhoneNumber);
+          if (!phoneNumberData) {
+            return { content: [{ type: 'text', text: `Could not find phone number ${inboxPhoneNumber}` }], isError: true };
+          }
+          const phoneNumberId = phoneNumberData.id;
+          const userId = phoneNumberData.users?.[0]?.id;
+          let participantsToSearch: string[] = [];
+          if (participantPhoneNumber) {
+            participantsToSearch = [participantPhoneNumber];
+          } else {
+            const conversationsResponse = await openPhoneClient.listConversations({ phoneNumber: phoneNumberId, maxResults: 50 }) as any;
+            const participants = new Set<string>();
+            conversationsResponse.data?.forEach((conv: any) => conv.participants?.forEach((p: string) => { if (p) participants.add(p); }));
+            participantsToSearch = Array.from(participants);
+          }
+          const allTranscripts: any[] = [];
+          for (const participant of participantsToSearch) {
+            if (allTranscripts.length >= maxResults) break;
+            try {
+              const callsResponse = await openPhoneClient.listCalls({ phoneNumberId, participants: [participant], userId, maxResults: Math.min(maxResults - allTranscripts.length, 20), createdAfter, createdBefore }) as any;
+              if (callsResponse.data) {
+                for (const call of callsResponse.data) {
+                  if (allTranscripts.length >= maxResults) break;
+                  try {
+                    const transcriptResponse = await openPhoneClient.getCallTranscript(call.id) as any;
+                    if (transcriptResponse.data && transcriptResponse.data.dialogue) {
+                      allTranscripts.push({ callId: call.id, participant, direction: call.direction, startedAt: call.startedAt, duration: call.duration, transcript: transcriptResponse.data });
+                    }
+                  } catch {}
+                }
+              }
+            } catch {}
+          }
+          if (allTranscripts.length === 0) {
+            return { content: [{ type: 'text', text: `No call transcripts found for ${inboxPhoneNumber}.` }] };
+          }
+          const summary = `Found ${allTranscripts.length} call transcripts for ${inboxPhoneNumber}:\n\n`;
+          let formatted = '';
+          allTranscripts.forEach((t, i) => {
+            formatted += `## Call ${i + 1}\n`;
+            formatted += `**Call ID:** ${t.callId}\n`;
+            formatted += `**Participant:** ${t.participant}\n`;
+            formatted += `**Direction:** ${t.direction}\n`;
+            formatted += `**Started:** ${t.startedAt}\n`;
+            formatted += `**Duration:** ${Math.round(t.duration || 0)}s\n`;
+            if (t.transcript?.dialogue?.length) {
+              formatted += `**Transcript:**\n`;
+              t.transcript.dialogue.forEach((seg: any) => { formatted += `[${Math.round(seg.start)}s] **${seg.userId ? 'User ' + seg.userId : seg.identifier}:** ${seg.content}\n`; });
+            }
+            formatted += `\n---\n\n`;
+          });
+          return { content: [{ type: 'text', text: summary + formatted }] };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          return { content: [{ type: 'text', text: `Error fetching call transcripts: ${msg}` }], isError: true };
+        }
+      }
+    );
+
+    // Reuse the same fetch-messages tool as in the full toolset
+    this.registerFetchMessagesTool();
   }
 
 

@@ -192,8 +192,13 @@ async function handleOAuthRegister(request: Request, url: URL, env: Env): Promis
 		const clientId = 'openphone-mcp-client';
 		const clientSecret = 'not-needed-for-pkce';
 
-		// Only accept Claude's callback URL
-		const redirectUris = ['https://claude.ai/api/mcp/auth_callback'];
+		// Accept callback URLs for both Claude and ChatGPT
+		const redirectUris = [
+			'https://claude.ai/api/mcp/auth_callback',
+			'https://chatgpt.com/oauth/callback',
+			'https://chat.openai.com/oauth/callback',
+			'urn:ietf:wg:oauth:2.0:oob'  // For out-of-band flow
+		];
 
 		const client: OAuthClient = {
 			client_id: clientId,
@@ -614,14 +619,14 @@ export default {
 		}
 
 		// Handle OAuth 2.1 + PKCE endpoints for Claude Desktop
-		if (url.pathname === "/.well-known/oauth-authorization-server") {
+		if (url.pathname === "/.well-known/oauth-authorization-server" || url.pathname === "/.well-known/oauth-authorization-server/sse") {
 			console.log('🔧 OAuth well-known endpoint accessed');
 			console.log('🔧 Well-known request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
 			return handleOAuthWellKnown(request, url);
 		}
 		
 		// Handle OAuth protected resource endpoints (required by MCP protocol)
-		if (url.pathname === "/.well-known/oauth-protected-resource") {
+		if (url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/sse") {
 			console.log('🔧 OAuth protected resource endpoint accessed');
 			return new Response(JSON.stringify({
 				resource: "openphone-mcp",
@@ -667,6 +672,10 @@ export default {
 
 		// Handle MCP SSE endpoint (protected)
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
+			const userAgent = request.headers.get('user-agent') || 'unknown';
+			const isClaudeDesktop = userAgent.includes('Claude-User');
+			const isChatGPT = userAgent.includes('ChatGPT') || userAgent.includes('OpenAI');
+			
 			console.log('🔗 SSE endpoint accessed');
 			console.log('🔗 Request method:', request.method);
 			console.log('🔗 Request URL:', request.url);
@@ -675,9 +684,21 @@ export default {
 			// Log specific headers we're looking for
 			console.log('🔗 Authorization header:', request.headers.get('authorization'));
 			console.log('🔗 Content-Type header:', request.headers.get('content-type'));
-			console.log('🔗 User-Agent header:', request.headers.get('user-agent'));
+			console.log('🔗 User-Agent header:', userAgent);
 			console.log('🔗 Origin header:', request.headers.get('origin'));
 			console.log('🔗 Referer header:', request.headers.get('referer'));
+			
+			if (isClaudeDesktop) {
+				console.log('🖥️ CLAUDE DESKTOP REQUEST DETECTED');
+				console.log('🖥️ Claude Desktop should have discovered OAuth endpoints first');
+				console.log('🖥️ Expected flow: discovery -> register -> authorize -> token -> authenticated request');
+			}
+			
+			if (isChatGPT) {
+				console.log('🤖 CHATGPT REQUEST DETECTED');
+				console.log('🤖 ChatGPT should be discovering MCP tools');
+				console.log('🤖 Expected flow: tool discovery -> authentication -> tool usage');
+			}
 			
 			// Check if there's a request body
 			const bodyText = request.method === 'POST' ? await request.text() : '';
@@ -694,6 +715,13 @@ export default {
 			const authResult = await authGate(newRequest, env);
 			if (authResult.response) {
 				console.log('❌ SSE auth failed, returning response');
+				if (isClaudeDesktop) {
+					console.log('❌ CLAUDE DESKTOP AUTH FAILED - OAuth flow not completed');
+					console.log('❌ Claude Desktop needs to complete OAuth flow first');
+					console.log('❌ Check that Claude Desktop discovered OAuth endpoints at:');
+					console.log('❌   - /.well-known/oauth-authorization-server/sse');
+					console.log('❌   - /.well-known/oauth-protected-resource/sse');
+				}
 				return authResult.response;
 			}
 			
@@ -773,514 +801,339 @@ function getHomepageHTML(): string {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --bg: #0f1220;
+            --surface: #171a2a;
+            --card: #1c2033;
+            --muted: #94a3b8;
+            --text: #e5e7eb;
+            --heading: #f8fafc;
+            --accent: #f97316;
+            --accent-2: #22c55e;
+            --border: #2b3149;
+            --shadow: 0 6px 20px rgba(0,0,0,0.25);
         }
-        
-        body { 
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
-            min-height: 100vh;
-            color: #1a202c;
-            position: relative;
-            overflow-x: hidden;
+        [data-theme="light"] {
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --card: #ffffff;
+            --muted: #475569;
+            --text: #0f172a;
+            --heading: #0f172a;
+            --accent: #ea580c;
+            --accent-2: #16a34a;
+            --border: #e2e8f0;
+            --shadow: 0 6px 18px rgba(2,6,23,0.08);
         }
-        
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
-            pointer-events: none;
-            z-index: -1;
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body {
+            font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+            background: var(--bg);
+            color: var(--text);
         }
-        
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 1.5rem;
+        .header {
+            position: sticky; top: 0; z-index: 50;
+            backdrop-filter: saturate(140%) blur(8px);
+            background: color-mix(in oklab, var(--bg) 85%, transparent);
+            border-bottom: 1px solid var(--border);
         }
-        
-        .hero { 
-            text-align: center; 
-            margin-bottom: 2.5rem;
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(20px);
-            padding: 3.5rem 2.5rem;
-            border-radius: 24px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
-            border: 1px solid rgba(255,255,255,0.3);
-            position: relative;
-            overflow: hidden;
+        .header-inner {
+            max-width: 1100px; margin: 0 auto; padding: 0.75rem 1rem;
+            display: flex; align-items: center; justify-content: space-between;
         }
-        
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
+        .brand { display: flex; align-items: center; gap: 0.75rem; font-weight: 700; color: var(--heading); }
+        .brand .logo { font-size: 1.25rem; }
+        .brand small { font-weight: 600; color: var(--muted); }
+        .nav { display: flex; align-items: center; gap: 1rem; }
+        .nav a {
+            color: var(--muted); text-decoration: none; font-weight: 600; font-size: 0.95rem; padding: 0.4rem 0.6rem; border-radius: 8px;
         }
-        
-        .hero h1 {
-            font-size: 3rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 1rem;
-            letter-spacing: -0.025em;
+        .nav a:hover { color: var(--heading); background: color-mix(in oklab, var(--card), transparent 65%); }
+        .theme-toggle {
+            appearance: none; border: 1px solid var(--border); background: var(--surface);
+            color: var(--text); border-radius: 10px; padding: 0.4rem 0.6rem; cursor: pointer; font-weight: 600;
         }
-        
-        .hero p {
-            font-size: 1.25rem;
-            color: #475569;
-            font-weight: 500;
-            max-width: 500px;
-            margin: 0 auto;
+        .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+
+        .hero {
+            background: radial-gradient(1200px 300px at 50% -20%, color-mix(in oklab, var(--accent), transparent 75%), transparent 60%), var(--surface);
+            border: 1px solid var(--border); border-radius: 16px; padding: 2.5rem; margin: 1.25rem 0 2rem; box-shadow: var(--shadow); position: relative; overflow: hidden;
         }
-        
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            background: rgba(34, 197, 94, 0.1);
-            border: 1px solid rgba(34, 197, 94, 0.3);
-            color: #059669;
-            padding: 0.4rem 0.875rem;
-            border-radius: 50px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            margin-top: 1rem;
+        .hero h1 { font-size: 2.4rem; letter-spacing: -0.02em; color: var(--heading); font-weight: 800; margin-bottom: 0.5rem; }
+        .hero p { color: var(--muted); font-size: 1.05rem; max-width: 720px; }
+        .cta { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1.2rem; }
+        .btn { border: 1px solid color-mix(in oklab, var(--accent), var(--border)); background: color-mix(in oklab, var(--accent), transparent 85%); color: var(--accent); padding: 0.55rem 0.9rem; border-radius: 10px; font-weight: 700; cursor: pointer; }
+        .btn:hover { background: color-mix(in oklab, var(--accent), transparent 75%); }
+        .btn-ghost { border: 1px solid var(--border); background: var(--card); color: var(--text); }
+        .btn-ghost:hover { background: color-mix(in oklab, var(--card), transparent 70%); }
+        .pill { display: inline-flex; align-items: center; gap: 0.5rem; border: 1px solid color-mix(in oklab, var(--accent-2), var(--border)); background: color-mix(in oklab, var(--accent-2), transparent 85%); color: var(--accent-2); font-weight: 700; padding: 0.4rem 0.65rem; border-radius: 999px; }
+
+        .section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin: 1.25rem 0; box-shadow: var(--shadow); }
+        .section h2 { font-size: 1.25rem; color: var(--heading); display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem; }
+        .muted { color: var(--muted); }
+
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+        [role="tab"] {
+            border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+            border-radius: 10px; padding: 0.45rem 0.8rem; font-weight: 700; cursor: pointer;
         }
-        
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: #22c55e;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .card {
-            background: rgba(255, 255, 255, 0.97);
-            backdrop-filter: blur(20px);
-            padding: 2rem;
-            border-radius: 20px;
-            box-shadow: 0 12px 24px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.2);
-            margin: 2rem 0;
-            border: 1px solid rgba(255,255,255,0.3);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-        }
-        
-        .card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 24px 48px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.3);
-        }
-        
-        .card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 1px;
-            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.8) 50%, transparent 100%);
-        }
-        
-        .card h2 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 1.5rem;
-            color: #1e293b;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-        
-        .icon {
-            font-size: 1.8rem;
-        }
-        
-        .code { 
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: #e2e8f0;
-            padding: 0;
-            border-radius: 16px;
-            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
-            overflow: hidden;
-            font-size: 0.875rem;
-            line-height: 1.6;
-            border: 1px solid rgba(71, 85, 105, 0.3);
-            position: relative;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        }
-        
-        .code-header {
-            background: linear-gradient(135deg, #334155 0%, #475569 100%);
-            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
-            padding: 0.75rem 1.25rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: #cbd5e1;
-        }
-        
-        .code-content {
-            padding: 1.25rem;
-        }
-        
-        .code pre {
-            margin: 0;
-            padding: 0;
-            font-family: inherit;
-            white-space: pre;
-            tab-size: 2;
-        }
-        
-        .copy-button {
-            background: rgba(59, 130, 246, 0.1);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            color: #60a5fa;
-            padding: 0.375rem 0.75rem;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 0.375rem;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-        
-        .copy-button:hover {
-            background: rgba(59, 130, 246, 0.2);
-            border-color: rgba(59, 130, 246, 0.5);
-            transform: translateY(-1px);
-        }
-        
-        .copy-button.copied {
-            background: rgba(34, 197, 94, 0.2);
-            border-color: rgba(34, 197, 94, 0.5);
-            color: #22c55e;
-        }
-        
-        .copy-icon {
-            width: 14px;
-            height: 14px;
-        }
-        
-        .highlight {
-            background: linear-gradient(135deg, #fef3cd 0%, #fed7aa 100%);
-            border: 1px solid #f59e0b;
-            color: #92400e;
-            padding: 1.25rem;
-            border-radius: 12px;
-            margin: 1.5rem 0;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .highlight::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            height: 100%;
-            width: 4px;
-            background: #f59e0b;
-        }
-        
-        .tools-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 1rem;
-            margin-top: 1.5rem;
-        }
-        
-        .tool-item {
-            background: rgba(248, 250, 252, 0.9);
-            padding: 1.5rem;
-            border-radius: 16px;
-            border: 1px solid rgba(226, 232, 240, 0.5);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .tool-item::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 50%, #ec4899 100%);
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-        
-        .tool-item:hover {
-            background: rgba(255, 255, 255, 1);
-            transform: translateY(-4px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-            border-color: rgba(139, 92, 246, 0.3);
-        }
-        
-        .tool-item:hover::before {
-            opacity: 1;
-        }
-        
-        .tool-name {
-            font-weight: 600;
-            color: #1e293b;
-            margin-bottom: 0.5rem;
-            font-size: 0.95rem;
-        }
-        
-        .tool-desc {
-            font-size: 0.85rem;
-            color: #64748b;
-            line-height: 1.5;
-        }
-        
-        .badge {
-            display: inline-block;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-left: 0.5rem;
-        }
-        
-        .footer {
-            text-align: center;
-            margin-top: 3rem;
-            padding: 2rem;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            border-radius: 16px;
-            border: 1px solid rgba(255,255,255,0.2);
-        }
-        
-        .footer p {
-            color: rgba(255, 255, 255, 0.9);
-            font-weight: 300;
-        }
-        
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 2.25rem;
-            }
-            
-            .hero p {
-                font-size: 1.1rem;
-            }
-            
-            .container {
-                padding: 1rem;
-            }
-            
-            .hero {
-                padding: 2.5rem 1.5rem;
-                margin-bottom: 2rem;
-            }
-            
-            .card {
-                padding: 1.5rem;
-                margin: 1.5rem 0;
-            }
-            
-            .code-header {
-                padding: 0.5rem 1rem;
-                flex-direction: column;
-                gap: 0.5rem;
-                align-items: flex-start;
-            }
-        }
+        [role="tab"][aria-selected="true"] { color: var(--heading); border-color: color-mix(in oklab, var(--accent), var(--border)); background: color-mix(in oklab, var(--accent), transparent 90%); }
+        [role="tabpanel"][hidden] { display: none; }
+
+        .code { border: 1px solid var(--border); background: #0b1220; border-radius: 10px; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+        [data-theme="light"] .code { background: #0f172a; }
+        .code-header { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); color: #cbd5e1; font-weight: 700; font-size: 0.8rem; }
+        .code pre { margin: 0; padding: 0.9rem; color: #e2e8f0; white-space: pre; overflow-x: auto; tab-size: 2; }
+        .copy { border: 1px solid var(--border); background: color-mix(in oklab, var(--surface), transparent 0%); color: var(--text); border-radius: 8px; padding: 0.35rem 0.6rem; cursor: pointer; font-weight: 600; }
+        .copy:hover { background: color-mix(in oklab, var(--surface), transparent 70%); }
+
+        details.tool { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 0.9rem 1rem; margin: 0.6rem 0; }
+        details.tool > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.6rem; font-weight: 700; color: var(--heading); }
+        details.tool > summary::-webkit-details-marker { display: none; }
+        .badge { display: inline-block; background: var(--accent); color: #fff; padding: 0.15rem 0.5rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
+        .example { margin-top: 0.7rem; }
+
+        .grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+        .footer { text-align: center; margin-top: 2rem; padding: 1.25rem; color: var(--muted); border-top: 1px solid var(--border); }
+
+        .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface); color: var(--heading); border: 1px solid var(--border); padding: 0.6rem 0.9rem; border-radius: 10px; box-shadow: var(--shadow); font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
+
+        .focus-ring { outline: 2px solid color-mix(in oklab, var(--accent), white 10%); outline-offset: 2px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="hero">
-            <h1>📞 OpenPhone MCP</h1>
-            <p>AI-powered messaging and contact management for the modern workspace</p>
-            <div class="status-badge">
-                <span class="status-dot"></span>
-                Production Ready
+    <header class="header">
+        <div class="header-inner">
+            <div class="brand">
+                <div class="logo">📞</div>
+                <div>OpenPhone MCP <small>v1.0.0</small></div>
             </div>
+            <nav class="nav">
+                <a href="#setup">Setup</a>
+                <a href="#tools">Tools</a>
+                <a href="#security">Security</a>
+                <a href="#docs">Docs</a>
+                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
+            </nav>
         </div>
-        
-        <div class="card">
-            <h2><span class="icon">🚀</span>Quick Setup</h2>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem;">
-                <div>
-                    <h3 style="margin-bottom: 1rem; color: #1e293b;">🌐 Claude Web App</h3>
-                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;">Add as a direct integration:</p>
-                    <ol style="color: #64748b; font-size: 0.9rem; line-height: 1.6; padding-left: 1.5rem;">
-                        <li>Go to Claude.ai settings</li>
-                        <li>Click "Add integration"</li>
-                        <li>Name: <strong>OpenPhone</strong></li>
-                        <li>URL: <code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 4px;">https://mcp.openphonelabs.com/sse</code></li>
-                        <li>Click "Connect" and enter your API key</li>
-                    </ol>
-                </div>
-                
-                <div>
-                    <h3 style="margin-bottom: 1rem; color: #1e293b;">💻 Claude Desktop</h3>
-                    <p style="margin-bottom: 1rem; color: #64748b; font-size: 0.9rem;"><strong>Method 1:</strong> Settings > Integrations > Add custom integration<br>
-                    <strong>Method 2:</strong> Add to configuration file:</p>
-            
-            <div class="code">
-                <div class="code-header">
-                    <span>claude_desktop_config.json</span>
-                    <button class="copy-button" onclick="copyConfig(this)">
-                        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                        <span class="copy-text">Copy</span>
-                    </button>
-                </div>
-                <div class="code-content">
-<pre>{
-  "mcpServers": {
-    "openphone": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.openphonelabs.com/sse"
-      ]
-    }
-  }
-}</pre>
-                </div>
-                    
-                    <div class="highlight" style="margin-top: 1rem;">
-                        <strong>✅ Secure Authentication:</strong> This server uses OAuth 2.1 + PKCE for secure authentication.<br>
-                        Claude Desktop will prompt for your API key during the first connection.<br>
-                        <strong>Note:</strong> No API keys in URLs - your credentials stay secure.
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2><span class="icon">🛠️</span>Available Tools<span class="badge">4 Tools</span></h2>
-            <div class="tools-grid">
-                <div class="tool-item">
-                    <div class="tool-name">💬 send-message</div>
-                    <div class="tool-desc">Send text messages to any phone number instantly</div>
-                </div>
-                <div class="tool-item">
-                    <div class="tool-name">📢 bulk-messages</div>
-                    <div class="tool-desc">Send the same message to multiple recipients at once</div>
-                </div>
-                <div class="tool-item">
-                    <div class="tool-name">👥 create-contact</div>
-                    <div class="tool-desc">Create and manage contacts in your OpenPhone workspace</div>
-                </div>
-                <div class="tool-item">
-                    <div class="tool-name">📞 fetch-call-transcripts</div>
-                    <div class="tool-desc">Fetch and analyze call transcripts (Business plan required)</div>
-                </div>
-            </div>
-        </div>
+    </header>
 
-        <div class="card">
-            <h2><span class="icon">🔐</span>Security Features</h2>
-            <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); padding: 1.25rem; border-radius: 12px; margin-bottom: 1.5rem;">
-                <strong style="color: #059669;">Enhanced Security:</strong><br>
-                OAuth 2.1 + PKCE authentication ensures your API keys are never exposed in URLs, logs, or browser history.
+    <main class="container">
+        <section class="hero">
+            <div class="pill"><span class="dot" style="width:8px;height:8px;background:var(--accent-2);border-radius:50%;display:inline-block"></span> Production Ready</div>
+            <h1>OpenPhone MCP</h1>
+            <p>AI-powered messaging and contact management for the modern workspace. Compatible with Claude Desktop and ChatGPT.</p>
+            <div class="cta">
+                <button class="btn-ghost btn" id="copyUrl">Copy MCP URL</button>
+                <button class="btn-ghost btn" id="copyInspector">Copy MCP Inspector cmd</button>
             </div>
-            <div class="tools-grid">
-                <div class="tool-item">
-                    <div class="tool-name">🔍 Input Validation</div>
-                    <div class="tool-desc">Phone number format, message length, and API key validation</div>
+        </section>
+
+        <section id="setup" class="section">
+            <h2>🚀 Quick Setup</h2>
+
+            <div class="tabs" role="tablist" aria-label="Setup">
+                <button role="tab" aria-selected="true" aria-controls="tab-claude" id="tab-claude-btn">Claude Desktop</button>
+                <button role="tab" aria-selected="false" aria-controls="tab-chatgpt" id="tab-chatgpt-btn">ChatGPT</button>
+            </div>
+
+            <section id="tab-claude" role="tabpanel" aria-labelledby="tab-claude-btn">
+                <ol class="muted" style="line-height:1.9; padding-left: 1.25rem;">
+                    <li>Open Claude Desktop → Settings → Integrations</li>
+                    <li>Click <strong style="color: var(--heading);">Add custom integration</strong></li>
+                    <li>Name: <strong style="color: var(--heading);">OpenPhone</strong></li>
+                    <li>URL: <code style="background:#0b1220;color:var(--accent);padding:0.2rem 0.4rem;border-radius:6px;border:1px solid var(--border)">https://mcp.openphonelabs.com/sse</code></li>
+                    <li>Click Connect and enter your OpenPhone API key</li>
+                </ol>
+
+                <p class="muted" style="margin-top:0.6rem">Tip: Claude Desktop may occasionally disconnect — just reconnect.</p>
+            </section>
+
+            <section id="tab-chatgpt" role="tabpanel" aria-labelledby="tab-chatgpt-btn" hidden>
+                <ol class="muted" style="line-height:1.9; padding-left: 1.25rem;">
+                    <li>Open ChatGPT → Settings → Connectors</li>
+                    <li>Enable <strong style="color: var(--heading);">Developer mode</strong> (Pro/Plus required)</li>
+                    <li>Click <strong style="color: var(--heading);">Add connector</strong></li>
+                    <li>Name: <strong style="color: var(--heading);">OpenPhone MCP</strong></li>
+                    <li>URL: <code style="background:#0b1220;color:var(--accent);padding:0.2rem 0.4rem;border-radius:6px;border:1px solid var(--border)">https://mcp.openphonelabs.com/sse</code></li>
+                    <li>Complete OAuth flow and enter your OpenPhone API key</li>
+                </ol>
+                <div class="code" style="margin-top:0.9rem;">
+                    <div class="code-header">Connector URL <button class="copy" data-copy-content="https://mcp.openphonelabs.com/sse">Copy</button></div>
+                    <pre>https://mcp.openphonelabs.com/sse</pre>
                 </div>
-                <div class="tool-item">
-                    <div class="tool-name">🌐 Security Headers</div>
-                    <div class="tool-desc">CSP, X-Frame-Options, and content type protection</div>
+            </section>
+        </section>
+
+        <section id="tools" class="section">
+            <h2>🛠️ Available Tools <span class="badge" style="margin-left:0.4rem">5 Tools</span></h2>
+            <div>
+                <details class="tool" open>
+                    <summary>💬 send-message</summary>
+                    <p class="muted" style="margin-top:0.4rem">Send a text message to a phone number from your OpenPhone number.</p>
+                    <div class="example code">
+                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-send-message">Copy</button></div>
+                        <pre id="ex-send-message">{
+  "to": "+15551234567",
+  "text": "Hey there! Can we move our call to 3pm?"
+}</pre>
+                    </div>
+                </details>
+                <details class="tool">
+                    <summary>📢 bulk-messages</summary>
+                    <p class="muted" style="margin-top:0.4rem">Send the same message to multiple recipients.</p>
+                    <div class="example code">
+                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-bulk">Copy</button></div>
+                        <pre id="ex-bulk">{
+  "to": ["+15551230001", "+15551230002", "+15551230003"],
+  "text": "Reminder: Daily standup at 9:30am"
+}</pre>
+                    </div>
+                </details>
+                <details class="tool">
+                    <summary>👥 create-contact</summary>
+                    <p class="muted" style="margin-top:0.4rem">Create and manage contacts in your OpenPhone workspace.</p>
+                    <div class="example code">
+                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-contact">Copy</button></div>
+                        <pre id="ex-contact">{
+  "name": "Jordan Lee",
+  "company": "Acme Co",
+  "email": "jordan@acme.com",
+  "phone": "+15558675309"
+}</pre>
+                    </div>
+                </details>
+                <details class="tool">
+                    <summary>📞 fetch-call-transcripts</summary>
+                    <p class="muted" style="margin-top:0.4rem">Fetch and analyze call transcripts. Requires transcription to be enabled.</p>
+                    <div class="example code">
+                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-transcripts">Copy</button></div>
+                        <pre id="ex-transcripts">{
+  "since": "2025-01-01",
+  "limit": 10
+}</pre>
+                    </div>
+                </details>
+                <details class="tool">
+                    <summary>💬 fetch-messages</summary>
+                    <p class="muted" style="margin-top:0.4rem">Fetch and analyze message history with one or more participants.</p>
+                    <div class="example code">
+                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-messages">Copy</button></div>
+                        <pre id="ex-messages">{
+  "participants": ["+15559876543"],
+  "limit": 50
+}</pre>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <section id="security" class="section">
+            <h2>🔐 Security</h2>
+            <div class="grid">
+                <div class="section" style="margin:0;">
+                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">OAuth 2.1 + PKCE</h3>
+                    <p class="muted">Industry-standard authentication with Proof Key for Code Exchange.</p>
                 </div>
-                <div class="tool-item">
-                    <div class="tool-name">⏱️ Request Protection</div>
-                    <div class="tool-desc">30-second timeouts and sanitized error messages</div>
+                <div class="section" style="margin:0;">
+                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">No Server Storage</h3>
+                    <p class="muted">API keys are never stored server-side; tokens are stateless.</p>
                 </div>
-                <div class="tool-item">
-                    <div class="tool-name">🔒 OAuth 2.1 + PKCE</div>
-                    <div class="tool-desc">Industry-standard authentication with PKCE for enhanced security</div>
+                <div class="section" style="margin:0;">
+                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">Security Headers</h3>
+                    <p class="muted">CSP, X-Frame-Options, X-Content-Type-Options enforced.</p>
+                </div>
+                <div class="section" style="margin:0;">
+                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">Timeouts</h3>
+                    <p class="muted">30-second request timeouts and sanitized error messages.</p>
                 </div>
             </div>
-        </div>
-        
+        </section>
+
+        <section id="docs" class="section">
+            <h2>📚 Docs & Links</h2>
+            <ul class="muted" style="line-height:2; padding-left:1.25rem;">
+                <li><a href="https://github.com/openphone/auth-openphone-mcp" target="_blank" rel="noreferrer" style="color:var(--heading); text-decoration: none;">GitHub Repository →</a></li>
+                <li><a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer" style="color:var(--heading); text-decoration: none;">Model Context Protocol →</a></li>
+            </ul>
+        </section>
+
         <div class="footer">
-            <p>Powered by Cloudflare Workers • Built for Claude Desktop</p>
+            Powered by Cloudflare Workers • Compatible with Claude Desktop & ChatGPT
         </div>
-    </div>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite">Copied</div>
 
     <script>
-        function copyConfig(button) {
-            const configText = JSON.stringify({
-                mcpServers: {
-                    openphone: {
-                        command: "npx",
-                        args: [
-                            "mcp-remote",
-                            "https://mcp.openphonelabs.com/sse"
-                        ]
-                    }
-                }
-            }, null, 2);
-            
-            navigator.clipboard.writeText(configText).then(() => {
-                const originalText = button.querySelector('.copy-text').textContent;
-                button.classList.add('copied');
-                button.querySelector('.copy-text').textContent = 'Copied!';
-                
-                setTimeout(() => {
-                    button.classList.remove('copied');
-                    button.querySelector('.copy-text').textContent = originalText;
-                }, 2000);
-            }).catch(err => {
-                console.error('Failed to copy: ', err);
-                // Fallback for older browsers
-                const textArea = document.createElement('textarea');
-                textArea.value = configText;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-                
-                const originalText = button.querySelector('.copy-text').textContent;
-                button.classList.add('copied');
-                button.querySelector('.copy-text').textContent = 'Copied!';
-                
-                setTimeout(() => {
-                    button.classList.remove('copied');
-                    button.querySelector('.copy-text').textContent = originalText;
-                }, 2000);
+        (function() {
+            const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+            const saved = localStorage.getItem('theme');
+            const theme = saved || (prefersLight ? 'light' : 'dark');
+            if (theme === 'light') document.body.setAttribute('data-theme', 'light');
+            const btn = document.getElementById('themeToggle');
+            const setIcon = () => { btn.textContent = document.body.getAttribute('data-theme') === 'light' ? '🌚' : '🌙'; };
+            btn.addEventListener('click', () => {
+                const isLight = document.body.getAttribute('data-theme') === 'light';
+                if (isLight) { document.body.removeAttribute('data-theme'); localStorage.setItem('theme', 'dark'); }
+                else { document.body.setAttribute('data-theme', 'light'); localStorage.setItem('theme', 'light'); }
+                setIcon();
             });
+            setIcon();
+        })();
+
+        // Tabs
+        (function() {
+            const claudeBtn = document.getElementById('tab-claude-btn');
+            const chatgptBtn = document.getElementById('tab-chatgpt-btn');
+            const claudePanel = document.getElementById('tab-claude');
+            const chatgptPanel = document.getElementById('tab-chatgpt');
+            function select(tab) {
+                const isClaude = tab === 'claude';
+                claudeBtn.setAttribute('aria-selected', isClaude ? 'true' : 'false');
+                chatgptBtn.setAttribute('aria-selected', isClaude ? 'false' : 'true');
+                claudePanel.hidden = !isClaude;
+                chatgptPanel.hidden = isClaude;
+            }
+            claudeBtn.addEventListener('click', () => select('claude'));
+            chatgptBtn.addEventListener('click', () => select('chatgpt'));
+        })();
+
+        function showToast(text) {
+            const el = document.getElementById('toast');
+            el.textContent = text || 'Copied';
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 1600);
         }
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => showToast('Copied'));
+        }
+
+        // Copy buttons (target element text or provided content)
+        document.querySelectorAll('.copy').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetSel = btn.getAttribute('data-copy-target');
+                const inline = btn.getAttribute('data-copy-content');
+                if (inline) { copyText(inline); return; }
+                if (!targetSel) return;
+                const target = document.querySelector(targetSel);
+                if (target) copyText(target.textContent || '');
+            });
+        });
+
+        // CTA buttons
+        document.getElementById('copyUrl').addEventListener('click', () => copyText('https://mcp.openphonelabs.com/sse'));
+        document.getElementById('copyInspector').addEventListener('click', () => copyText('npx @modelcontextprotocol/inspector@latest'));
+
+        // Keyboard focus ring
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') document.body.classList.add('using-keyboard');
+        });
+        document.addEventListener('mousedown', () => document.body.classList.remove('using-keyboard'));
     </script>
 </body>
 </html>
@@ -1309,9 +1162,9 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
         body { 
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
+            background: #1a1b2e;
             min-height: 100vh;
-            color: #1a202c;
+            color: #e2e8f0;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1319,12 +1172,11 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
         }
         
         .auth-container {
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(20px);
+            background: #2a2b3e;
             padding: 3rem;
-            border-radius: 24px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
-            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(249, 115, 22, 0.1);
+            border: 1px solid #374151;
             max-width: 500px;
             width: 100%;
             position: relative;
@@ -1337,45 +1189,42 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
             top: 0;
             left: 0;
             right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #00f5ff 0%, #8b5cf6 25%, #ec4899 50%, #f59e0b 75%, #10b981 100%);
+            height: 3px;
+            background: linear-gradient(90deg, #f97316 0%, #ea580c 50%, #dc2626 100%);
         }
         
         h1 {
             font-size: 2rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #00f5ff 0%, #8b5cf6 50%, #ec4899 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: #f8fafc;
             margin-bottom: 0.5rem;
             text-align: center;
         }
         
         .subtitle {
-            color: #64748b;
+            color: #94a3b8;
             text-align: center;
             margin-bottom: 2rem;
             font-size: 1.1rem;
         }
         
         .scope-info {
-            background: rgba(59, 130, 246, 0.1);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            border-radius: 12px;
+            background: rgba(249, 115, 22, 0.05);
+            border: 1px solid rgba(249, 115, 22, 0.2);
+            border-radius: 8px;
             padding: 1rem;
             margin-bottom: 1.5rem;
         }
         
         .scope-title {
             font-weight: 600;
-            color: #1e40af;
+            color: #f97316;
             margin-bottom: 0.5rem;
         }
         
         .scope-list {
             list-style: none;
-            color: #374151;
+            color: #d1d5db;
         }
         
         .scope-list li {
@@ -1388,7 +1237,7 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
             content: '✓';
             position: absolute;
             left: 0;
-            color: #10b981;
+            color: #22c55e;
             font-weight: bold;
         }
         
@@ -1400,23 +1249,25 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
             display: block;
             margin-bottom: 0.5rem;
             font-weight: 600;
-            color: #374151;
+            color: #f8fafc;
         }
         
         input {
             width: 100%;
             padding: 0.875rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 12px;
+            border: 2px solid #4b5563;
+            border-radius: 8px;
             font-size: 1rem;
             transition: border-color 0.2s ease;
             font-family: 'SF Mono', 'Monaco', monospace;
+            background: #374151;
+            color: #f8fafc;
         }
         
         input:focus {
             outline: none;
-            border-color: #8b5cf6;
-            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+            border-color: #f97316;
+            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
         }
         
         .button-group {
@@ -1429,7 +1280,7 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
             flex: 1;
             padding: 1rem;
             border: none;
-            border-radius: 12px;
+            border-radius: 8px;
             font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
@@ -1437,12 +1288,12 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
         }
         
         .btn-approve {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            background: #22c55e;
             color: white;
         }
         
         .btn-deny {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            background: #ef4444;
             color: white;
         }
         
@@ -1459,23 +1310,23 @@ function getAuthorizationPageHTML(clientId: string, redirectUri: string, scope: 
         .error {
             background: rgba(239, 68, 68, 0.1);
             border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #dc2626;
+            color: #f87171;
             padding: 1rem;
-            border-radius: 12px;
+            border-radius: 8px;
             margin-bottom: 1.5rem;
             font-size: 0.9rem;
         }
         
         .help-text {
             font-size: 0.875rem;
-            color: #6b7280;
+            color: #94a3b8;
             margin-top: 0.5rem;
         }
         
         .client-info {
-            background: rgba(156, 163, 175, 0.1);
-            border: 1px solid rgba(156, 163, 175, 0.3);
-            border-radius: 12px;
+            background: rgba(156, 163, 175, 0.05);
+            border: 1px solid rgba(156, 163, 175, 0.2);
+            border-radius: 8px;
             padding: 1rem;
             margin-bottom: 1.5rem;
             font-size: 0.9rem;
@@ -1563,9 +1414,9 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
         body { 
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533a7d 100%);
+            background: #1a1b2e;
             min-height: 100vh;
-            color: #1a202c;
+            color: #e2e8f0;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1573,12 +1424,11 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
         }
         
         .success-container {
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(20px);
+            background: #2a2b3e;
             padding: 3rem;
-            border-radius: 24px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.3);
-            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(249, 115, 22, 0.1);
+            border: 1px solid #374151;
             max-width: 500px;
             width: 100%;
             position: relative;
@@ -1592,8 +1442,8 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
             top: 0;
             left: 0;
             right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+            height: 3px;
+            background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
         }
         
         .success-icon {
@@ -1611,15 +1461,12 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
         h1 {
             font-size: 2rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: #22c55e;
             margin-bottom: 1rem;
         }
         
         .subtitle {
-            color: #64748b;
+            color: #94a3b8;
             margin-bottom: 2rem;
             font-size: 1.1rem;
         }
@@ -1632,16 +1479,16 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
         <div class="success-icon">✅</div>
         <h1>Authorization Successful!</h1>
         <p class="subtitle">Your OpenPhone account has been connected to Claude Desktop.</p>
-        <p style="margin: 1.5rem 0; color: #059669; font-weight: 600; font-size: 1.1rem;">
+        <p style="margin: 1.5rem 0; color: #22c55e; font-weight: 600; font-size: 1.1rem;">
             🎉 You can now use OpenPhone tools in Claude!
         </p>
         
-        <p style="color: #64748b; margin-bottom: 1rem;">
+        <p style="color: #94a3b8; margin-bottom: 1rem;">
             You can safely close this tab and return to Claude Desktop.
         </p>
         
-        <div id="countdown-container" style="margin: 1rem 0; padding: 1rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; display: none;">
-            <p style="color: #1e40af; font-weight: 600; margin-bottom: 0.5rem;">
+        <div id="countdown-container" style="margin: 1rem 0; padding: 1rem; background: rgba(249, 115, 22, 0.05); border: 1px solid rgba(249, 115, 22, 0.2); border-radius: 8px; display: none;">
+            <p style="color: #f97316; font-weight: 600; margin-bottom: 0.5rem;">
                 ⏱️ Auto-redirecting in <span id="countdown">3</span> seconds...
             </p>
             <button onclick="cancelRedirect()" style="background: #ef4444; color: white; border: none; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem;">
@@ -1649,8 +1496,8 @@ function getSuccessPageHTML(responseData: string, redirectUri?: string, state?: 
             </button>
         </div>
         
-        <div style="margin-top: 1rem; font-size: 0.9rem; color: #9ca3af;">
-            <p>💡 Use <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Ctrl+W</kbd> (or <kbd style="background: #f3f4f6; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Cmd+W</kbd> on Mac) to close this tab</p>
+        <div style="margin-top: 1rem; font-size: 0.9rem; color: #94a3b8;">
+            <p>💡 Use <kbd style="background: #374151; color: #f8fafc; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Ctrl+W</kbd> (or <kbd style="background: #374151; color: #f8fafc; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace;">Cmd+W</kbd> on Mac) to close this tab</p>
         </div>
     </div>
 
