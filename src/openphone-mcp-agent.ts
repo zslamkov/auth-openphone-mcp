@@ -16,7 +16,6 @@ type Props = {
 type Env = {
   OPENPHONE_API_KEY?: string;
   OAUTH_SECRET_KEY?: string;
-  OPENAI_API_KEY?: string;
 }
 
 export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
@@ -147,21 +146,6 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     }
   }
 
-  // --- AI middleware planner (OpenAI) ---
-  private async planSearchWithOpenAI(query: string): Promise<{
-    actions: Array<{
-      type: 'messages' | 'calls';
-      inboxPhoneNumber?: string;          // E.164 preferred
-      participantPhoneNumber?: string;    // E.164 preferred
-      maxResults?: number;
-      createdAfter?: string;              // ISO 8601
-      createdBefore?: string;             // ISO 8601
-      keywords?: string;                  // optional text filter
-    }>;
-  } | null> {
-    // AI middleware removed
-    return null;
-  }
 
   private addChatGPTTools() {
     console.log('🔧 Adding search tool...');
