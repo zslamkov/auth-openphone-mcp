@@ -1,6 +1,6 @@
 # OpenPhone Remote MCP Server
 
-A production-ready remote Model Context Protocol (MCP) server that provides OpenPhone functionality through Cloudflare Workers. Send messages, manage contacts, and fetch call transcripts directly from Claude Desktop.
+A production-ready remote Model Context Protocol (MCP) server that provides OpenPhone functionality through Cloudflare Workers. Send messages, manage contacts, and fetch call transcripts directly from Claude Desktop and ChatGPT.
 
 ## 🌟 Features
 
@@ -23,7 +23,7 @@ A production-ready remote Model Context Protocol (MCP) server that provides Open
 
 ## 🚀 Quick Setup
 
-The easiest way to connect this MCP server to Claude Desktop:
+The easiest way to connect this MCP server to Claude Desktop or ChatGPT:
 
 ### 1. Get Your OpenPhone API Key
 1. Log into your [OpenPhone dashboard](https://app.openphone.com)
@@ -42,22 +42,15 @@ The easiest way to connect this MCP server to Claude Desktop:
 5. Click **"Connect"**
 6. When prompted, enter your OpenPhone API key securely
 
-**Method 2: Configuration File**
-Update your Claude Desktop configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+### ChatGPT Connector Setup
+1. Open ChatGPT → Settings → Connectors
+2. Enable "Developer mode" (Pro/Plus required)
+3. Click "Add connector"
+4. Name: OpenPhone MCP
+5. URL: `https://mcp.openphonelabs.com/sse`
+6. Complete OAuth flow and enter your OpenPhone API key
 
-```json
-{
-  "mcpServers": {
-    "openphone": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "https://mcp.openphonelabs.com/sse"
-      ]
-    }
-  }
-}
-```
+**Note:** For OAuth flows, use Claude Desktop's in-app integration; configuration file snippets are not supported.
 
 **🔐 Enhanced Security:**
 - OAuth 2.1 + PKCE authentication ensures your API keys are never exposed in URLs
@@ -112,20 +105,6 @@ Once configured, you can ask Claude to help with tasks like:
    - Use URL: `http://localhost:8787/sse`
    - When prompted, enter your OpenPhone API key
 
-### Local Testing with Claude Desktop
-```json
-{
-  "mcpServers": {
-    "openphone": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:8787/sse"
-      ]
-    }
-  }
-}
-```
 
 ## 🏭 Production Deployment
 
