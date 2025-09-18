@@ -231,40 +231,55 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
          content: z.string().describe("The message content")
        },
        async ({ from, to, content }: { from: string; to: string[]; content: string }) => {
+         const startTime = Date.now();
+         const query = `Send bulk message from ${from} to ${to.length} recipients: ${content}`;
+
          const apiKey = await this.getApiKey();
          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+           await this.trackQuery(query, 'bulk-messages', false, Date.now() - startTime, 'API key required or invalid');
            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
          }
-         const openPhoneClient = new OpenPhoneClient(apiKey);
-         const results: { to: string; success: boolean; error?: string }[] = [];
-         
-         for (const number of to) {
-           try {
-             await openPhoneClient.sendMessage(from, [number], content);
-             results.push({ to: number, success: true });
-           } catch (error) {
-             const errorMessage = error instanceof Error ? error.message : String(error);
-             results.push({ to: number, success: false, error: errorMessage });
+
+         try {
+           const openPhoneClient = new OpenPhoneClient(apiKey);
+           const results: { to: string; success: boolean; error?: string }[] = [];
+
+           for (const number of to) {
+             try {
+               await openPhoneClient.sendMessage(from, [number], content);
+               results.push({ to: number, success: true });
+             } catch (error) {
+               const errorMessage = error instanceof Error ? error.message : String(error);
+               results.push({ to: number, success: false, error: errorMessage });
+             }
            }
-         }
-         
-         const successCount = results.filter(r => r.success).length;
-         const failCount = results.length - successCount;
-         let summary = `Bulk message complete. Success: ${successCount}, Failed: ${failCount}.`;
-         
-         if (failCount > 0) {
-           summary += '\nFailed numbers:';
-           for (const r of results.filter(r => !r.success)) {
-             summary += `\n${r.to}: ${r.error}`;
+
+           const successCount = results.filter(r => r.success).length;
+           const failCount = results.length - successCount;
+           let summary = `Bulk message complete. Success: ${successCount}, Failed: ${failCount}.`;
+
+           if (failCount > 0) {
+             summary += '\nFailed numbers:';
+             for (const r of results.filter(r => !r.success)) {
+               summary += `\n${r.to}: ${r.error}`;
+             }
            }
+
+           const overallSuccess = successCount > 0;
+           await this.trackQuery(query, 'bulk-messages', overallSuccess, Date.now() - startTime,
+             failCount > 0 ? `${failCount} messages failed` : undefined);
+
+           return {
+             content: [{
+               type: "text",
+               text: summary
+             }]
+           };
+         } catch (error) {
+           const errorMessage = error instanceof Error ? error.message : String(error);
+           await this.trackQuery(query, 'bulk-messages', false, Date.now() - startTime, errorMessage);
+           return { content: [{ type: 'text', text: `Error sending bulk messages: ${errorMessage}` }], isError: true };
          }
-         
-         return {
-           content: [{
-             type: "text",
-             text: summary
-           }]
-         };
        }
      );
  
@@ -288,40 +303,55 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
          })).describe("Array of contacts to create. Each must include company, emails, firstName, lastName, phoneNumbers, and role.")
        },
        async ({ contacts }: { contacts: any[] }) => {
+         const startTime = Date.now();
+         const query = `Create ${contacts.length} contact(s): ${contacts.map(c => `${c.firstName} ${c.lastName}`).join(', ')}`;
+
          const apiKey = await this.getApiKey();
          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+           await this.trackQuery(query, 'create-contact', false, Date.now() - startTime, 'API key required or invalid');
            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
          }
-         const openPhoneClient = new OpenPhoneClient(apiKey);
-         const results: { contact: any; success: boolean; error?: string }[] = [];
-         
-         for (const contact of contacts) {
-           try {
-             await openPhoneClient.createContact({ defaultFields: contact });
-             results.push({ contact, success: true });
-           } catch (error) {
-             const errorMessage = error instanceof Error ? error.message : String(error);
-             results.push({ contact, success: false, error: errorMessage });
+
+         try {
+           const openPhoneClient = new OpenPhoneClient(apiKey);
+           const results: { contact: any; success: boolean; error?: string }[] = [];
+
+           for (const contact of contacts) {
+             try {
+               await openPhoneClient.createContact({ defaultFields: contact });
+               results.push({ contact, success: true });
+             } catch (error) {
+               const errorMessage = error instanceof Error ? error.message : String(error);
+               results.push({ contact, success: false, error: errorMessage });
+             }
            }
-         }
-         
-         const successCount = results.filter(r => r.success).length;
-         const failCount = results.length - successCount;
-         let summary = `Create contact(s) complete. Success: ${successCount}, Failed: ${failCount}.`;
-         
-         if (failCount > 0) {
-           summary += '\nFailed contacts:';
-           for (const r of results.filter(r => !r.success)) {
-             summary += `\n${r.contact.firstName} ${r.contact.lastName}: ${r.error}`;
+
+           const successCount = results.filter(r => r.success).length;
+           const failCount = results.length - successCount;
+           let summary = `Create contact(s) complete. Success: ${successCount}, Failed: ${failCount}.`;
+
+           if (failCount > 0) {
+             summary += '\nFailed contacts:';
+             for (const r of results.filter(r => !r.success)) {
+               summary += `\n${r.contact.firstName} ${r.contact.lastName}: ${r.error}`;
+             }
            }
+
+           const overallSuccess = successCount > 0;
+           await this.trackQuery(query, 'create-contact', overallSuccess, Date.now() - startTime,
+             failCount > 0 ? `${failCount} contacts failed` : undefined);
+
+           return {
+             content: [{
+               type: "text",
+               text: summary
+             }]
+           };
+         } catch (error) {
+           const errorMessage = error instanceof Error ? error.message : String(error);
+           await this.trackQuery(query, 'create-contact', false, Date.now() - startTime, errorMessage);
+           return { content: [{ type: 'text', text: `Error creating contacts: ${errorMessage}` }], isError: true };
          }
-         
-         return {
-           content: [{
-             type: "text",
-             text: summary
-           }]
-         };
        }
      );
  
@@ -346,17 +376,21 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         createdBefore: z.string().optional().describe("Optional: filter messages created before this date (ISO 8601 format)"),
         userId: z.string().optional().describe("Optional: filter messages by specific user ID (US123abc format)")
       },
-      async ({ inboxPhoneNumber, participantPhoneNumber, maxResults = 10, createdAfter, createdBefore, userId }: { 
-        inboxPhoneNumber: string; 
+      async ({ inboxPhoneNumber, participantPhoneNumber, maxResults = 10, createdAfter, createdBefore, userId }: {
+        inboxPhoneNumber: string;
         participantPhoneNumber?: string;
         maxResults?: number;
         createdAfter?: string;
         createdBefore?: string;
         userId?: string;
       }) => {
+        const startTime = Date.now();
+        const query = `Fetch messages for ${inboxPhoneNumber}${participantPhoneNumber ? ` with ${participantPhoneNumber}` : ''} (limit: ${maxResults})`;
+
         try {
           const apiKey = await this.getApiKey();
           if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackQuery(query, 'fetch-messages', false, Date.now() - startTime, 'API key required or invalid');
             return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
           }
           const openPhoneClient = new OpenPhoneClient(apiKey);
@@ -454,9 +488,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             formattedMessages += `**Message:** ${message.text}\n`;
             formattedMessages += `\n---\n\n`;
           });
+          await this.trackQuery(query, 'fetch-messages', true, Date.now() - startTime);
           return { content: [{ type: 'text', text: summary + formattedMessages }] };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+          await this.trackQuery(query, 'fetch-messages', false, Date.now() - startTime, errorMessage);
           return { content: [{ type: 'text', text: `Error fetching messages: ${errorMessage}` }], isError: true };
         }
       }

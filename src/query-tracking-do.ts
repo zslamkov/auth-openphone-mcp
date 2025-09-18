@@ -2,7 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import { QueryTrack, QueryStats, QueryFilters } from "./query-tracking.js";
 
 export class QueryTrackingDO extends DurableObject {
-  private queries: QueryTrack[] = [];
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -39,7 +38,10 @@ export class QueryTrackingDO extends DurableObject {
       }
     } catch (error) {
       console.error('QueryTrackingDO error:', error);
-      return new Response('Internal Server Error', { status: 500 });
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     return new Response('Method Not Allowed', { status: 405 });
@@ -48,10 +50,10 @@ export class QueryTrackingDO extends DurableObject {
   private async trackQuery(request: Request): Promise<Response> {
     try {
       const queryTrack: Omit<QueryTrack, 'id'> = await request.json();
-      
+
       // Generate unique ID
       const id = crypto.randomUUID();
-      
+
       // Create complete query track record
       const track: QueryTrack = {
         id,
@@ -59,13 +61,11 @@ export class QueryTrackingDO extends DurableObject {
         timestamp: Date.now(),
       };
 
-      // Store the query
-      this.queries.push(track);
+      // Store the query in Durable Object storage
+      await this.ctx.storage.put(`query:${track.id}`, track);
 
-      // Keep only last 1000 queries to prevent memory issues
-      if (this.queries.length > 1000) {
-        this.queries = this.queries.slice(-1000);
-      }
+      // Update metadata counters
+      await this.updateCounters(track);
 
       console.log(`📊 Tracked query: ${track.toolName || 'unknown'} by user ${track.userId}`);
 
@@ -74,7 +74,10 @@ export class QueryTrackingDO extends DurableObject {
       });
     } catch (error) {
       console.error('Error tracking query:', error);
-      return new Response('Invalid JSON', { status: 400 });
+      return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
   }
 
@@ -104,49 +107,55 @@ export class QueryTrackingDO extends DurableObject {
       filters.success = url.searchParams.get('success') === 'true';
     }
 
-    // Apply filters
-    let filteredQueries = this.queries;
+    // Get all queries from storage
+    const allQueries = await this.ctx.storage.list<QueryTrack>({ prefix: 'query:' });
+    let queries: QueryTrack[] = Array.from(allQueries.values());
 
+    // Apply filters
     if (filters.userId) {
-      filteredQueries = filteredQueries.filter(q => q.userId === filters.userId);
+      queries = queries.filter(q => q.userId === filters.userId);
     }
     if (filters.toolName) {
-      filteredQueries = filteredQueries.filter(q => q.toolName === filters.toolName);
+      queries = queries.filter(q => q.toolName === filters.toolName);
     }
     if (filters.clientType) {
-      filteredQueries = filteredQueries.filter(q => q.metadata?.clientType === filters.clientType);
+      queries = queries.filter(q => q.metadata?.clientType === filters.clientType);
     }
     if (filters.startDate) {
-      filteredQueries = filteredQueries.filter(q => q.timestamp >= filters.startDate!);
+      queries = queries.filter(q => q.timestamp >= filters.startDate!);
     }
     if (filters.endDate) {
-      filteredQueries = filteredQueries.filter(q => q.timestamp <= filters.endDate!);
+      queries = queries.filter(q => q.timestamp <= filters.endDate!);
     }
     if (filters.success !== undefined) {
-      filteredQueries = filteredQueries.filter(q => q.success === filters.success);
+      queries = queries.filter(q => q.success === filters.success);
     }
 
     // Sort by timestamp (newest first)
-    filteredQueries.sort((a, b) => b.timestamp - a.timestamp);
+    queries.sort((a, b) => b.timestamp - a.timestamp);
 
     // Apply pagination
     const start = filters.offset || 0;
     const end = start + (filters.limit || 50);
-    const paginatedQueries = filteredQueries.slice(start, end);
+    const paginatedQueries = queries.slice(start, end);
 
     return new Response(JSON.stringify({
       queries: paginatedQueries,
-      total: filteredQueries.length,
-      hasMore: end < filteredQueries.length
+      total: queries.length,
+      hasMore: end < queries.length
     }), {
       headers: { 'Content-Type': 'application/json' }
     });
   }
 
   private async getStats(request: Request): Promise<Response> {
+    // Get all queries from storage
+    const allQueries = await this.ctx.storage.list<QueryTrack>({ prefix: 'query:' });
+    const queries: QueryTrack[] = Array.from(allQueries.values());
+
     const stats: QueryStats = {
-      totalQueries: this.queries.length,
-      uniqueUsers: new Set(this.queries.map(q => q.userId)).size,
+      totalQueries: queries.length,
+      uniqueUsers: new Set(queries.map(q => q.userId)).size,
       queriesByTool: {},
       queriesByClient: {},
       averageResponseTime: 0,
@@ -156,9 +165,10 @@ export class QueryTrackingDO extends DurableObject {
 
     // Calculate stats
     let totalResponseTime = 0;
+    let responseTimes = 0;
     let successfulQueries = 0;
 
-    for (const query of this.queries) {
+    for (const query of queries) {
       // Tool stats
       if (query.toolName) {
         stats.queriesByTool[query.toolName] = (stats.queriesByTool[query.toolName] || 0) + 1;
@@ -171,6 +181,7 @@ export class QueryTrackingDO extends DurableObject {
       // Response time
       if (query.responseTime) {
         totalResponseTime += query.responseTime;
+        responseTimes++;
       }
 
       // Success rate
@@ -184,9 +195,11 @@ export class QueryTrackingDO extends DurableObject {
     }
 
     // Calculate averages
-    if (this.queries.length > 0) {
-      stats.averageResponseTime = totalResponseTime / this.queries.length;
-      stats.successRate = successfulQueries / this.queries.length;
+    if (responseTimes > 0) {
+      stats.averageResponseTime = Math.round(totalResponseTime / responseTimes);
+    }
+    if (queries.length > 0) {
+      stats.successRate = Math.round((successfulQueries / queries.length) * 100) / 100;
     }
 
     return new Response(JSON.stringify(stats), {
@@ -195,11 +208,53 @@ export class QueryTrackingDO extends DurableObject {
   }
 
   private async clearQueries(request: Request): Promise<Response> {
-    this.queries = [];
-    console.log('🗑️ Cleared all query tracking data');
-    
+    // Delete all query records
+    await this.ctx.storage.deleteAll();
+    console.log('🗑️ Cleared all query tracking data from persistent storage');
+
     return new Response(JSON.stringify({ message: 'Query tracking data cleared' }), {
       headers: { 'Content-Type': 'application/json' }
     });
+  }
+
+  private async updateCounters(track: QueryTrack): Promise<void> {
+    try {
+      // Keep track of total queries for efficient stats
+      const totalQueries = (await this.ctx.storage.get<number>('meta:totalQueries')) || 0;
+      await this.ctx.storage.put('meta:totalQueries', totalQueries + 1);
+
+      // Keep track of unique users
+      const userKey = `user:${track.userId}`;
+      await this.ctx.storage.put(userKey, true);
+
+      // Cleanup old entries if we have too many (keep last 10,000)
+      if (totalQueries > 0 && totalQueries % 1000 === 0) {
+        await this.cleanupOldEntries();
+      }
+    } catch (error) {
+      console.error('Error updating counters:', error);
+      // Don't fail the main operation if counter update fails
+    }
+  }
+
+  private async cleanupOldEntries(): Promise<void> {
+    try {
+      const allQueries = await this.ctx.storage.list<QueryTrack>({ prefix: 'query:' });
+      const queries: [string, QueryTrack][] = Array.from(allQueries.entries());
+
+      // If we have more than 10,000 queries, remove the oldest ones
+      if (queries.length > 10000) {
+        // Sort by timestamp and keep only the newest 10,000
+        queries.sort((a, b) => b[1].timestamp - a[1].timestamp);
+        const toDelete = queries.slice(10000).map(([key, _]) => key);
+
+        if (toDelete.length > 0) {
+          await this.ctx.storage.delete(toDelete);
+          console.log(`🧹 Cleaned up ${toDelete.length} old query records`);
+        }
+      }
+    } catch (error) {
+      console.error('Error during cleanup:', error);
+    }
   }
 }

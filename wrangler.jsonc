@@ -15,6 +15,10 @@
 		{
 			"new_sqlite_classes": ["OpenPhoneMCPAgent"],
 			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": ["QueryTrackingDO"],
+			"tag": "v3"
 		}
 	],
 	"durable_objects": {
