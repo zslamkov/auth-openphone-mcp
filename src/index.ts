@@ -1,6 +1,7 @@
 import { OpenPhoneMCPAgent } from "./openphone-mcp-agent.js";
+import { QueryTrackingDO } from "./query-tracking-do.js";
 
-export { OpenPhoneMCPAgent };
+export { OpenPhoneMCPAgent, QueryTrackingDO };
 
 // OAuth 2.1 + PKCE implementation for Claude Desktop
 interface OAuthClient {
@@ -26,6 +27,8 @@ interface AuthorizationCode {
 type Env = {
 	OPENPHONE_API_KEY?: string;
 	OAUTH_SECRET_KEY?: string;
+	QUERY_TRACKING: DurableObjectNamespace;
+	ADMIN_API_KEY?: string;  // Admin key for tracking endpoints
 }
 
 // In-memory storage for demo (in production, use Durable Objects or external storage)
@@ -47,6 +50,21 @@ async function sha256(plain: string): Promise<string> {
 function getSecretKey(env: Env): string {
 	// Use environment variable if available, fallback to default for backward compatibility
 	return env.OAUTH_SECRET_KEY || 'openphone-mcp-auth-secret-2024-fallback';
+}
+
+// Admin authentication for tracking endpoints
+function isAdminAuthenticated(request: Request, env: Env): boolean {
+	// Check for admin API key in Authorization header
+	const authHeader = request.headers.get('authorization');
+	if (!authHeader) return false;
+	
+	// Extract Bearer token
+	const token = authHeader.replace(/^Bearer\s+/i, '');
+	if (!token) return false;
+	
+	// Check against admin API key
+	const adminKey = env.ADMIN_API_KEY || 'admin-tracking-key-2024';
+	return token === adminKey;
 }
 
 async function createStatelessCode(authData: AuthorizationCode, env: Env): Promise<string> {
@@ -669,6 +687,23 @@ export default {
 		const searchParams = Object.fromEntries(url.searchParams.entries());
 		ctx.props = { ...headers, ...searchParams };
 
+
+		// Handle query tracking endpoints (admin only)
+		if (url.pathname.startsWith('/tracking/')) {
+			// Require admin authentication
+			if (!isAdminAuthenticated(request, env)) {
+				return new Response('Unauthorized - Admin access required', { 
+					status: 401,
+					headers: {
+						'WWW-Authenticate': 'Bearer realm="admin"',
+						'Access-Control-Allow-Origin': '*',
+					}
+				});
+			}
+			
+			const trackingDO = env.QUERY_TRACKING.get(env.QUERY_TRACKING.idFromName('query-tracking'));
+			return trackingDO.fetch(request);
+		}
 
 		// Handle MCP SSE endpoint (protected)
 		if (url.pathname === "/sse" || url.pathname === "/sse/message") {
