@@ -100,9 +100,26 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         }
       };
 
-      // For now, just log the tracking data
-      // TODO: Implement proper Durable Object tracking when environment access is available
-      console.log(`📊 Query tracked:`, JSON.stringify(trackingData, null, 2));
+      // Send tracking data to Durable Object if environment is available
+      if (this.env?.QUERY_TRACKING) {
+        try {
+          const trackingDO = this.env.QUERY_TRACKING.get(this.env.QUERY_TRACKING.idFromName('query-tracking'));
+          const trackingRequest = new Request('https://dummy.com/tracking/track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(trackingData)
+          });
+          await trackingDO.fetch(trackingRequest);
+          console.log(`📊 Query tracked to DO: ${toolName} by ${userId}`);
+        } catch (doError) {
+          console.error('Failed to track to Durable Object:', doError);
+          // Fallback to console logging
+          console.log(`📊 Query tracked (fallback):`, JSON.stringify(trackingData, null, 2));
+        }
+      } else {
+        // Fallback to console logging when DO not available (e.g., in development)
+        console.log(`📊 Query tracked (no DO):`, JSON.stringify(trackingData, null, 2));
+      }
     } catch (error) {
       console.error('Failed to track query:', error);
     }
