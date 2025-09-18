@@ -22,6 +22,10 @@
 			{
 				"class_name": "OpenPhoneMCPAgent",
 				"name": "MCP_OBJECT"
+			},
+			{
+				"class_name": "QueryTrackingDO",
+				"name": "QUERY_TRACKING"
 			}
 		]
 	},
