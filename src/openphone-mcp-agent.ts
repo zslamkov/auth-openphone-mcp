@@ -16,6 +16,7 @@ type Props = {
 type Env = {
   OPENPHONE_API_KEY?: string;
   OAUTH_SECRET_KEY?: string;
+  SEGMENT_WRITE_KEY?: string;
 }
 
 export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
@@ -31,19 +32,17 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
   }
 
   async init() {
-    // Debug: Log all available props and env
-    console.log('MCP Agent Init - Props:', JSON.stringify(this.props, null, 2));
-    console.log('MCP Agent Init - Env keys:', Object.keys(this.env || {}));
+    // Init without logging
 
     // Detect ChatGPT client
     const uaInit = (this.props as any)['user-agent']?.toLowerCase?.() || '';
     const isOpenAIMcpClientInit = uaInit.includes('openai-mcp');
     // Gate tool registration by client
     if (isOpenAIMcpClientInit) {
-      console.log('🔧 ChatGPT client detected: registering limited legacy tools (send-message, fetch-call-transcripts)');
+      // Register limited toolset for ChatGPT client
       this.addChatGPTLimitedTools();
     } else {
-      console.log('🔧 Non-ChatGPT client detected: registering full OpenPhone tools');
+      // Register full toolset for other clients
       this.addOpenPhoneTools();
     }
 
@@ -55,18 +54,73 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
       return;
     }
 
-    console.log('API key found, validating...');
+    // Validate API key silently
 
     // Validate the API key
     const isValid = await this.validateApiKey(apiKey);
     if (!isValid) {
-      console.log('API key validation failed - handlers will continue to enforce at runtime');
+      // Validation failed; handlers will enforce at runtime
       return;
     }
 
-    console.log('API key valid');
-
     // Tools already registered; nothing else to add here
+  }
+
+  // Segment tracking helper
+  private async trackSegment(event: string, properties: Record<string, unknown>, success: boolean, responseTimeMs?: number, errorMessage?: string) {
+    try {
+      const writeKey = (this.env as Env)?.SEGMENT_WRITE_KEY || (globalThis as any)?.__OPENPHONE_ENV__?.SEGMENT_WRITE_KEY;
+      if (!writeKey) {
+        return; // Segment not configured
+      }
+
+      const apiKey = await this.getApiKey();
+      const userId = apiKey ? await this.hashApiKey(apiKey) : 'anonymous';
+
+      const userAgent = (this.props as any)['user-agent'] || '';
+      let clientType: 'claude' | 'chatgpt' | 'other' = 'other';
+      const uaLower = String(userAgent).toLowerCase();
+      if (uaLower.includes('claude')) clientType = 'claude';
+      else if (uaLower.includes('openai') || uaLower.includes('chatgpt')) clientType = 'chatgpt';
+
+      const body = {
+        userId,
+        event,
+        properties: {
+          ...properties,
+          success,
+          responseTimeMs,
+          error: errorMessage,
+          clientType,
+        },
+        context: {
+          library: { name: 'openphone-mcp', version: '1.0.0' },
+          userAgent,
+        },
+        timestamp: new Date().toISOString(),
+      };
+
+      const authHeader = 'Basic ' + btoa(`${writeKey}:`);
+      const res = await fetch('https://api.segment.io/v1/track', {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      void res;
+    } catch {
+      // Never block tool on analytics failure
+    }
+  }
+
+  private async hashApiKey(apiKey: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(apiKey);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
   }
 
   private async getApiKey(): Promise<string | null> {
@@ -81,7 +135,6 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     // Check environment variable first (most secure for production)
     const envKey = (this.env as Env).OPENPHONE_API_KEY;
     if (envKey) {
-      console.log('Using API key from environment variable');
       return this.validateApiKeyFormat(envKey);
     }
     
@@ -90,27 +143,21 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
     
     // Check custom header
     if (props['x-openphone-api-key']) {
-      console.log('Using API key from X-OpenPhone-API-Key header');
       return this.validateApiKeyFormat(props['x-openphone-api-key']);
     }
     
     // Check URL parameters (multiple parameter names supported)
     if (props.apiKey) {
-      console.log('Using API key from apiKey URL parameter');
       return this.validateApiKeyFormat(props.apiKey);
     }
     
     if (props.key) {
-      console.log('Using API key from key URL parameter');
       return this.validateApiKeyFormat(props.key);
     }
     
     if (props.token) {
-      console.log('Using API key from token URL parameter');
       return this.validateApiKeyFormat(props.token);
     }
-    
-    console.log('No API key found in any source');
     return null;
   }
 
@@ -166,40 +213,49 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
          content: z.string().describe("The message content")
        },
        async ({ from, to, content }: { from: string; to: string[]; content: string }) => {
-         const apiKey = await this.getApiKey();
-         if (!apiKey || !(await this.validateApiKey(apiKey))) {
-           return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
-         }
-         const openPhoneClient = new OpenPhoneClient(apiKey);
-         const results: { to: string; success: boolean; error?: string }[] = [];
-         
-         for (const number of to) {
-           try {
-             await openPhoneClient.sendMessage(from, [number], content);
-             results.push({ to: number, success: true });
-           } catch (error) {
-             const errorMessage = error instanceof Error ? error.message : String(error);
-             results.push({ to: number, success: false, error: errorMessage });
-           }
-         }
-         
-         const successCount = results.filter(r => r.success).length;
-         const failCount = results.length - successCount;
-         let summary = `Bulk message complete. Success: ${successCount}, Failed: ${failCount}.`;
-         
-         if (failCount > 0) {
-           summary += '\nFailed numbers:';
-           for (const r of results.filter(r => !r.success)) {
-             summary += `\n${r.to}: ${r.error}`;
-           }
-         }
-         
-         return {
-           content: [{
-             type: "text",
-             text: summary
-           }]
-         };
+        const startAt = Date.now();
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackSegment('bulk-messages', { toolName: 'bulk-messages' }, false, Date.now() - startAt, 'API key required or invalid');
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const results: { to: string; success: boolean; error?: string }[] = [];
+
+          for (const number of to) {
+            try {
+              await openPhoneClient.sendMessage(from, [number], content);
+              results.push({ to: number, success: true });
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              results.push({ to: number, success: false, error: errorMessage });
+            }
+          }
+
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.length - successCount;
+          let summary = `Bulk message complete. Success: ${successCount}, Failed: ${failCount}.`;
+
+          if (failCount > 0) {
+            summary += '\nFailed numbers:';
+            for (const r of results.filter(r => !r.success)) {
+              summary += `\n${r.to}: ${r.error}`;
+            }
+          }
+
+          await this.trackSegment('bulk-messages', { toolName: 'bulk-messages', successCount, failCount }, true, Date.now() - startAt);
+          return {
+            content: [{
+              type: "text",
+              text: summary
+            }]
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await this.trackSegment('bulk-messages', { toolName: 'bulk-messages' }, false, Date.now() - startAt, msg);
+          return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+        }
        }
      );
  
@@ -223,40 +279,49 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
          })).describe("Array of contacts to create. Each must include company, emails, firstName, lastName, phoneNumbers, and role.")
        },
        async ({ contacts }: { contacts: any[] }) => {
-         const apiKey = await this.getApiKey();
-         if (!apiKey || !(await this.validateApiKey(apiKey))) {
-           return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
-         }
-         const openPhoneClient = new OpenPhoneClient(apiKey);
-         const results: { contact: any; success: boolean; error?: string }[] = [];
-         
-         for (const contact of contacts) {
-           try {
-             await openPhoneClient.createContact({ defaultFields: contact });
-             results.push({ contact, success: true });
-           } catch (error) {
-             const errorMessage = error instanceof Error ? error.message : String(error);
-             results.push({ contact, success: false, error: errorMessage });
-           }
-         }
-         
-         const successCount = results.filter(r => r.success).length;
-         const failCount = results.length - successCount;
-         let summary = `Create contact(s) complete. Success: ${successCount}, Failed: ${failCount}.`;
-         
-         if (failCount > 0) {
-           summary += '\nFailed contacts:';
-           for (const r of results.filter(r => !r.success)) {
-             summary += `\n${r.contact.firstName} ${r.contact.lastName}: ${r.error}`;
-           }
-         }
-         
-         return {
-           content: [{
-             type: "text",
-             text: summary
-           }]
-         };
+        const startAt = Date.now();
+        try {
+          const apiKey = await this.getApiKey();
+          if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackSegment('create-contact', { toolName: 'create-contact' }, false, Date.now() - startAt, 'API key required or invalid');
+            return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
+          }
+          const openPhoneClient = new OpenPhoneClient(apiKey);
+          const results: { contact: any; success: boolean; error?: string }[] = [];
+
+          for (const contact of contacts) {
+            try {
+              await openPhoneClient.createContact({ defaultFields: contact });
+              results.push({ contact, success: true });
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              results.push({ contact, success: false, error: errorMessage });
+            }
+          }
+
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.length - successCount;
+          let summary = `Create contact(s) complete. Success: ${successCount}, Failed: ${failCount}.`;
+
+          if (failCount > 0) {
+            summary += '\nFailed contacts:';
+            for (const r of results.filter(r => !r.success)) {
+              summary += `\n${r.contact.firstName} ${r.contact.lastName}: ${r.error}`;
+            }
+          }
+
+          await this.trackSegment('create-contact', { toolName: 'create-contact', successCount, failCount }, true, Date.now() - startAt);
+          return {
+            content: [{
+              type: "text",
+              text: summary
+            }]
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await this.trackSegment('create-contact', { toolName: 'create-contact' }, false, Date.now() - startAt, msg);
+          return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+        }
        }
      );
  
@@ -289,9 +354,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         createdBefore?: string;
         userId?: string;
       }) => {
+        const startAt = Date.now();
         try {
           const apiKey = await this.getApiKey();
           if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackSegment('fetch-messages', { toolName: 'fetch-messages' }, false, Date.now() - startAt, 'API key required or invalid');
             return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
           }
           const openPhoneClient = new OpenPhoneClient(apiKey);
@@ -301,6 +368,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             pn.id === inboxPhoneNumber
           );
           if (!phoneNumberData) {
+            await this.trackSegment('fetch-messages', { toolName: 'fetch-messages', reason: 'phone-number-not-found', inboxPhoneNumber }, false, Date.now() - startAt, 'Phone number not found');
             return {
               content: [{ type: 'text', text: `Error: Could not find phone number ${inboxPhoneNumber} in your OpenPhone workspace. Available numbers: ${phoneNumbersResponse.data?.map((pn: any) => pn.number).join(', ') || 'none'}` }],
               isError: true
@@ -330,6 +398,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             participantsToSearch = Array.from(participants);
           }
           if (participantsToSearch.length === 0) {
+            await this.trackSegment('fetch-messages', { toolName: 'fetch-messages', reason: 'no-conversations', inboxPhoneNumber }, false, Date.now() - startAt, 'No conversations');
             return { content: [{ type: 'text', text: `No conversations found for ${inboxPhoneNumber}. Make sure the number has message history.` }], isError: true };
           }
           const allMessages: any[] = [];
@@ -369,6 +438,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             }
           }
           if (allMessages.length === 0) {
+            await this.trackSegment('fetch-messages', { toolName: 'fetch-messages', total: 0, participantsChecked: totalParticipantsChecked }, true, Date.now() - startAt);
             return { content: [{ type: 'text', text: `No messages found for ${inboxPhoneNumber}. Checked ${totalParticipantsChecked} participants.` }] };
           }
           allMessages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -389,9 +459,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             formattedMessages += `**Message:** ${message.text}\n`;
             formattedMessages += `\n---\n\n`;
           });
+          await this.trackSegment('fetch-messages', { toolName: 'fetch-messages', total: allMessages.length, participantsChecked: totalParticipantsChecked }, true, Date.now() - startAt);
           return { content: [{ type: 'text', text: summary + formattedMessages }] };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+          await this.trackSegment('fetch-messages', { toolName: 'fetch-messages' }, false, Date.now() - startAt, errorMessage);
           return { content: [{ type: 'text', text: `Error fetching messages: ${errorMessage}` }], isError: true };
         }
       }
@@ -413,18 +485,22 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         content: z.string().describe("The message content")
       },
       async ({ from, to, content }: { from: string; to: string; content: string }) => {
+        const startAt = Date.now();
         try {
           const apiKey = await this.getApiKey();
           if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackSegment('send-message', { toolName: 'send-message', from, to }, false, Date.now() - startAt, 'API key required or invalid');
             return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
           }
           const openPhoneClient = new OpenPhoneClient(apiKey);
           const result = await openPhoneClient.sendMessage(from, [to], content) as any;
+          await this.trackSegment('send-message', { toolName: 'send-message', from, to }, true, Date.now() - startAt);
           return {
             content: [{ type: 'text', text: `Message sent successfully to ${to}. Message ID: ${result.data?.id || result.id}` }]
           };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+          await this.trackSegment('send-message', { toolName: 'send-message', from, to }, false, Date.now() - startAt, errorMessage);
           return { content: [{ type: 'text', text: `Error sending message: ${errorMessage}` }], isError: true };
         }
       }
@@ -448,9 +524,11 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
         createdAfter?: string;
         createdBefore?: string;
       }) => {
+        const startAt = Date.now();
         try {
           const apiKey = await this.getApiKey();
           if (!apiKey || !(await this.validateApiKey(apiKey))) {
+            await this.trackSegment('fetch-call-transcripts', { toolName: 'fetch-call-transcripts' }, false, Date.now() - startAt, 'API key required or invalid');
             return { content: [{ type: 'text', text: 'API key required or invalid' }], isError: true };
           }
           const openPhoneClient = new OpenPhoneClient(apiKey);
@@ -604,6 +682,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
             formattedTranscripts += `\n---\n\n`;
           });
 
+          await this.trackSegment('fetch-call-transcripts', { toolName: 'fetch-call-transcripts', total: allTranscripts.length, totalCallsChecked }, true, Date.now() - startAt);
           return {
             content: [{
               type: "text",
@@ -613,6 +692,7 @@ export class OpenPhoneMCPAgent extends McpAgent<Props, Env> {
           
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
+          await this.trackSegment('fetch-call-transcripts', { toolName: 'fetch-call-transcripts' }, false, Date.now() - startAt, errorMessage);
           return {
             content: [{
               type: "text",
