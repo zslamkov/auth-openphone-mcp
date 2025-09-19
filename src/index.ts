@@ -26,6 +26,7 @@ interface AuthorizationCode {
 type Env = {
 	OPENPHONE_API_KEY?: string;
 	OAUTH_SECRET_KEY?: string;
+  SEGMENT_WRITE_KEY?: string;
 }
 
 // In-memory storage for demo (in production, use Durable Objects or external storage)
@@ -620,8 +621,7 @@ export default {
 
 		// Handle OAuth 2.1 + PKCE endpoints for Claude Desktop
 		if (url.pathname === "/.well-known/oauth-authorization-server" || url.pathname === "/.well-known/oauth-authorization-server/sse") {
-			console.log('🔧 OAuth well-known endpoint accessed');
-			console.log('🔧 Well-known request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
+            // OAuth well-known endpoint accessed
 			return handleOAuthWellKnown(request, url);
 		}
 		
@@ -645,23 +645,41 @@ export default {
 		}
 		
 		if (url.pathname === "/register") {
-			console.log('🔧 OAuth register endpoint accessed');
-			console.log('🔧 Register request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
+            // OAuth register endpoint accessed
 			return handleOAuthRegister(request, url, env);
 		}
 		
 		if (url.pathname === "/authorize") {
-			console.log('🔧 OAuth authorize endpoint accessed');
-			console.log('🔧 Authorize URL params:', url.searchParams.toString());
-			console.log('🔧 Request method:', request.method);
-			console.log('🔧 Request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
+            // OAuth authorize endpoint accessed
 			return handleOAuthAuthorize(request, url, env);
 		}
 		
 		if (url.pathname === "/token") {
-			console.log('🔧 OAuth token endpoint accessed');
-			console.log('🔧 Token request headers:', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
+            // OAuth token endpoint accessed
 			return handleOAuthToken(request, url, env);
+		}
+
+		// Debug endpoint to test Segment connectivity
+		if (url.pathname === "/debug/segment") {
+			const writeKey = env.SEGMENT_WRITE_KEY;
+			if (!writeKey) {
+				return new Response(JSON.stringify({ ok: false, error: 'SEGMENT_WRITE_KEY not set' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+			}
+			const auth = 'Basic ' + btoa(`${writeKey}:`);
+			const body = {
+				userId: 'debug',
+				event: 'debug_tool_call',
+				properties: { toolName: 'debug', success: true },
+				context: { library: { name: 'openphone-mcp', version: '1.0.0' } },
+				timestamp: new Date().toISOString()
+			};
+			const res = await fetch('https://api.segment.io/v1/track', {
+				method: 'POST',
+				headers: { 'Authorization': auth, 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+			const txt = await res.text();
+			return new Response(JSON.stringify({ ok: res.ok, status: res.status, body: txt }), { headers: { 'Content-Type': 'application/json' } });
 		}
 
 		// Extract headers for secure API key transmission (for non-protected endpoints)
@@ -676,33 +694,19 @@ export default {
 			const isClaudeDesktop = userAgent.includes('Claude-User');
 			const isChatGPT = userAgent.includes('ChatGPT') || userAgent.includes('OpenAI');
 			
-			console.log('🔗 SSE endpoint accessed');
-			console.log('🔗 Request method:', request.method);
-			console.log('🔗 Request URL:', request.url);
-			console.log('🔗 Request headers (ALL):', JSON.stringify(Object.fromEntries(request.headers.entries()), null, 2));
-			
-			// Log specific headers we're looking for
-			console.log('🔗 Authorization header:', request.headers.get('authorization'));
-			console.log('🔗 Content-Type header:', request.headers.get('content-type'));
-			console.log('🔗 User-Agent header:', userAgent);
-			console.log('🔗 Origin header:', request.headers.get('origin'));
-			console.log('🔗 Referer header:', request.headers.get('referer'));
+            // SSE endpoint accessed
 			
 			if (isClaudeDesktop) {
-				console.log('🖥️ CLAUDE DESKTOP REQUEST DETECTED');
-				console.log('🖥️ Claude Desktop should have discovered OAuth endpoints first');
-				console.log('🖥️ Expected flow: discovery -> register -> authorize -> token -> authenticated request');
+                // CLAUDE DESKTOP REQUEST DETECTED
 			}
 			
 			if (isChatGPT) {
-				console.log('🤖 CHATGPT REQUEST DETECTED');
-				console.log('🤖 ChatGPT should be discovering MCP tools');
-				console.log('🤖 Expected flow: tool discovery -> authentication -> tool usage');
+                // CHATGPT REQUEST DETECTED
 			}
 			
 			// Check if there's a request body
 			const bodyText = request.method === 'POST' ? await request.text() : '';
-			console.log('🔗 Request body:', bodyText);
+            // Body consumed
 			
 			// Create a new request with the body if it was consumed
 			const newRequest = request.method === 'POST' ? 
@@ -714,27 +718,15 @@ export default {
 			
 			const authResult = await authGate(newRequest, env);
 			if (authResult.response) {
-				console.log('❌ SSE auth failed, returning response');
-				if (isClaudeDesktop) {
-					console.log('❌ CLAUDE DESKTOP AUTH FAILED - OAuth flow not completed');
-					console.log('❌ Claude Desktop needs to complete OAuth flow first');
-					console.log('❌ Check that Claude Desktop discovered OAuth endpoints at:');
-					console.log('❌   - /.well-known/oauth-authorization-server/sse');
-					console.log('❌   - /.well-known/oauth-protected-resource/sse');
-				}
 				return authResult.response;
 			}
-			
-			console.log('✅ SSE auth successful, API key:', authResult.api_key ? 'PRESENT' : 'MISSING');
 			
 			// Add API key to headers for the agent
 			if (authResult.api_key) {
 				headers['x-openphone-api-key'] = authResult.api_key;
 				ctx.props = { ...headers, ...searchParams };
-				console.log('🔧 Set x-openphone-api-key header and updated ctx.props');
 			}
 			
-			console.log('🚀 Calling OpenPhoneMCPAgent.serveSSE("/sse")');
 			const response = await OpenPhoneMCPAgent.serveSSE("/sse").fetch(newRequest, env, ctx);
 			
 			// Add CORS headers to the response
@@ -912,13 +904,10 @@ function getHomepageHTML(): string {
                 <div class="logo">📞</div>
                 <div>OpenPhone MCP <small>v1.0.0</small></div>
             </div>
-            <nav class="nav">
-                <a href="#setup">Setup</a>
-                <a href="#tools">Tools</a>
-                <a href="#security">Security</a>
-                <a href="#docs">Docs</a>
-                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
-            </nav>
+	            <nav class="nav">
+	                <a href="#setup">Setup</a>
+	                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
+	            </nav>
         </div>
     </header>
 
@@ -969,98 +958,7 @@ function getHomepageHTML(): string {
             </section>
         </section>
 
-        <section id="tools" class="section">
-            <h2>🛠️ Available Tools <span class="badge" style="margin-left:0.4rem">5 Tools</span></h2>
-            <div>
-                <details class="tool" open>
-                    <summary>💬 send-message</summary>
-                    <p class="muted" style="margin-top:0.4rem">Send a text message to a phone number from your OpenPhone number.</p>
-                    <div class="example code">
-                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-send-message">Copy</button></div>
-                        <pre id="ex-send-message">{
-  "to": "+15551234567",
-  "text": "Hey there! Can we move our call to 3pm?"
-}</pre>
-                    </div>
-                </details>
-                <details class="tool">
-                    <summary>📢 bulk-messages</summary>
-                    <p class="muted" style="margin-top:0.4rem">Send the same message to multiple recipients.</p>
-                    <div class="example code">
-                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-bulk">Copy</button></div>
-                        <pre id="ex-bulk">{
-  "to": ["+15551230001", "+15551230002", "+15551230003"],
-  "text": "Reminder: Daily standup at 9:30am"
-}</pre>
-                    </div>
-                </details>
-                <details class="tool">
-                    <summary>👥 create-contact</summary>
-                    <p class="muted" style="margin-top:0.4rem">Create and manage contacts in your OpenPhone workspace.</p>
-                    <div class="example code">
-                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-contact">Copy</button></div>
-                        <pre id="ex-contact">{
-  "name": "Jordan Lee",
-  "company": "Acme Co",
-  "email": "jordan@acme.com",
-  "phone": "+15558675309"
-}</pre>
-                    </div>
-                </details>
-                <details class="tool">
-                    <summary>📞 fetch-call-transcripts</summary>
-                    <p class="muted" style="margin-top:0.4rem">Fetch and analyze call transcripts. Requires transcription to be enabled.</p>
-                    <div class="example code">
-                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-transcripts">Copy</button></div>
-                        <pre id="ex-transcripts">{
-  "since": "2025-01-01",
-  "limit": 10
-}</pre>
-                    </div>
-                </details>
-                <details class="tool">
-                    <summary>💬 fetch-messages</summary>
-                    <p class="muted" style="margin-top:0.4rem">Fetch and analyze message history with one or more participants.</p>
-                    <div class="example code">
-                        <div class="code-header">Example <button class="copy" data-copy-target="#ex-messages">Copy</button></div>
-                        <pre id="ex-messages">{
-  "participants": ["+15559876543"],
-  "limit": 50
-}</pre>
-                    </div>
-                </details>
-            </div>
-        </section>
 
-        <section id="security" class="section">
-            <h2>🔐 Security</h2>
-            <div class="grid">
-                <div class="section" style="margin:0;">
-                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">OAuth 2.1 + PKCE</h3>
-                    <p class="muted">Industry-standard authentication with Proof Key for Code Exchange.</p>
-                </div>
-                <div class="section" style="margin:0;">
-                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">No Server Storage</h3>
-                    <p class="muted">API keys are never stored server-side; tokens are stateless.</p>
-                </div>
-                <div class="section" style="margin:0;">
-                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">Security Headers</h3>
-                    <p class="muted">CSP, X-Frame-Options, X-Content-Type-Options enforced.</p>
-                </div>
-                <div class="section" style="margin:0;">
-                    <h3 style="font-size:1rem;color:var(--heading);margin-bottom:0.5rem">Timeouts</h3>
-                    <p class="muted">30-second request timeouts and sanitized error messages.</p>
-                </div>
-            </div>
-        </section>
-
-        <section id="docs" class="section">
-            <h2>📚 Docs & Links</h2>
-            <ul class="muted" style="line-height:2; padding-left:1.25rem;">
-                <li><a href="https://github.com/openphone/auth-openphone-mcp" target="_blank" rel="noreferrer" style="color:var(--heading); text-decoration: none;">GitHub Repository →</a></li>
-                <li><a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer" style="color:var(--heading); text-decoration: none;">Model Context Protocol →</a></li>
-            </ul>
-        </section>
 
         <div class="footer">
             Powered by Cloudflare Workers • Compatible with Claude Desktop & ChatGPT
