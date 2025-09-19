@@ -44,6 +44,74 @@ async function sha256(plain: string): Promise<string> {
 		.replace(/=/g, '');
 }
 
+// Extract user query from MCP protocol messages
+function extractUserQueryFromMCPMessage(mcpMessage: any): string | undefined {
+	try {
+		// Handle different MCP message types that might contain user context
+
+		// Tools call message - this contains the actual tool call with parameters
+		if (mcpMessage.method === 'tools/call' && mcpMessage.params?.arguments) {
+			// Check if the tool call already has a userQuery parameter
+			try {
+				const args = typeof mcpMessage.params.arguments === 'string'
+					? JSON.parse(mcpMessage.params.arguments)
+					: mcpMessage.params.arguments;
+
+				if (args.userQuery) {
+					return args.userQuery;
+				}
+			} catch (parseError) {
+				// JSON parsing failed, continue to other methods
+			}
+		}
+
+		// Completion request - this might contain the conversation context
+		if (mcpMessage.method === 'completion/complete' || mcpMessage.method === 'sampling/createMessage') {
+			// Look for user messages in the conversation
+			const messages = mcpMessage.params?.messages || mcpMessage.params?.prompt?.messages || [];
+
+			// Find the most recent user message
+			for (let i = messages.length - 1; i >= 0; i--) {
+				const message = messages[i];
+				if (message.role === 'user' && message.content) {
+					// Extract text content from various formats
+					if (typeof message.content === 'string') {
+						return message.content.trim();
+					} else if (Array.isArray(message.content)) {
+						// Handle message content arrays
+						const textContent = message.content
+							.filter((item: any) => item.type === 'text')
+							.map((item: any) => item.text)
+							.join(' ');
+						if (textContent.trim()) {
+							return textContent.trim();
+						}
+					}
+				}
+			}
+		}
+
+		// Generic message with text content
+		if (mcpMessage.content && typeof mcpMessage.content === 'string') {
+			return mcpMessage.content.trim();
+		}
+
+		// Check for any user-related text in common fields
+		if (mcpMessage.query && typeof mcpMessage.query === 'string') {
+			return mcpMessage.query.trim();
+		}
+
+		if (mcpMessage.text && typeof mcpMessage.text === 'string') {
+			return mcpMessage.text.trim();
+		}
+
+		return undefined;
+	} catch (e) {
+		// Parsing failed, return undefined
+		return undefined;
+	}
+}
+
 // Secure secret key management
 function getSecretKey(env: Env): string {
 	// Use environment variable if available, fallback to default for backward compatibility
@@ -707,25 +775,39 @@ export default {
 			// Check if there's a request body
 			const bodyText = request.method === 'POST' ? await request.text() : '';
             // Body consumed
-			
+
+			// Parse MCP messages to extract user queries
+			let userQuery: string | undefined;
+			if (bodyText) {
+				try {
+					const mcpMessage = JSON.parse(bodyText);
+					userQuery = extractUserQueryFromMCPMessage(mcpMessage);
+				} catch (e) {
+					// Not JSON or parsing failed, continue without user query
+				}
+			}
+
 			// Create a new request with the body if it was consumed
-			const newRequest = request.method === 'POST' ? 
+			const newRequest = request.method === 'POST' ?
 				new Request(request.url, {
 					method: request.method,
 					headers: request.headers,
 					body: bodyText
 				}) : request;
-			
+
 			const authResult = await authGate(newRequest, env);
 			if (authResult.response) {
 				return authResult.response;
 			}
-			
-			// Add API key to headers for the agent
+
+			// Add API key and user query to headers for the agent
 			if (authResult.api_key) {
 				headers['x-openphone-api-key'] = authResult.api_key;
-				ctx.props = { ...headers, ...searchParams };
 			}
+			if (userQuery) {
+				headers['x-user-query'] = userQuery;
+			}
+			ctx.props = { ...headers, ...searchParams };
 			
 			const response = await OpenPhoneMCPAgent.serveSSE("/sse").fetch(newRequest, env, ctx);
 			
